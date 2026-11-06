@@ -68,12 +68,10 @@ struct ContentView: View {
                         }
                         Divider()
                     }
-                    ForEach(model.pending.indices, id: \.self) { index in
-                        Text(model.pending[index])
-                    }
-                    if !model.volatile.isEmpty {
-                        Text(model.volatile)
-                            .foregroundStyle(.secondary)
+                    // 진행 중 문단: 확정 원문을 이어 쓰고 회색 전사 중 텍스트를 끝에 붙인다.
+                    if !model.pending.isEmpty || !model.volatile.isEmpty {
+                        let confirmed = model.pending.joined(separator: " ")
+                        Text("\(confirmed)\(confirmed.isEmpty ? "" : " ")\(Text(model.volatile).foregroundStyle(.secondary))")
                     }
                 }
                 .textSelection(.enabled)

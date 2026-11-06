@@ -14,7 +14,8 @@ final class SessionModel {
         var stage: Stage = .translating
     }
 
-    private static let batchSeconds = 30.0
+    /// 문단은 끊김에서 마치되, 끊김 없이 이 시간을 넘으면 확정 결과(문장) 끝에서 마친다.
+    private static let batchSeconds = 60.0
     /// 이 시간 동안 새 전사 결과가 없으면 대화가 끊긴 것으로 보고 바로 번역한다.
     private static let silenceSeconds = 10.0
     /// 끊김 시점에 쌓인 원문의 말한 시간이 이보다 짧으면 번역하지 않고 다음 말과 합친다.
@@ -90,7 +91,7 @@ final class SessionModel {
         isRunning = false
     }
 
-    /// 묶음의 첫 결과 시작부터 이번 결과 끝까지가 30초 이상이면 묶음을 번역으로 내보낸다.
+    /// 묶음의 첫 결과 시작부터 이번 결과 끝까지가 60초 이상이면 묶음을 번역으로 내보낸다.
     private func appendFinal(_ text: String, range: CMTimeRange) {
         pending.append(text)
         let start = pendingStart ?? range.start
