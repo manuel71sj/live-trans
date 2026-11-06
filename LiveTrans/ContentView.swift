@@ -10,6 +10,13 @@ struct ContentView: View {
     @State private var model = SessionModel()
     @State private var pairStatus: LanguageAvailability.Status?
     @State private var downloadConfiguration: TranslationSession.Configuration?
+    @State private var scrollPosition = ScrollPosition(edge: .bottom)
+
+    /// 스크롤 추적용: 내용 높이와, 그 시점에 맨 아래를 보고 있었는지
+    private struct ScrollState: Equatable {
+        var contentHeight: CGFloat
+        var isAtBottom: Bool
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -76,6 +83,19 @@ struct ContentView: View {
                 }
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollPosition($scrollPosition)
+            // 내용이 늘었을 때 직전에 맨 아래를 보고 있었으면 따라 내려가고, 위로 올려 둔 상태면 그대로 둔다.
+            .onScrollGeometryChange(for: ScrollState.self) { geometry in
+                ScrollState(
+                    contentHeight: geometry.contentSize.height,
+                    // 1pt는 소수점 픽셀 오차만 흡수한다. 조금이라도 위로 올리면 맨 아래가 아니다.
+                    isAtBottom: geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 1
+                )
+            } action: { old, new in
+                if new.contentHeight != old.contentHeight, old.isAtBottom {
+                    scrollPosition.scrollTo(edge: .bottom)
+                }
             }
             .frame(minHeight: 300)
         }
