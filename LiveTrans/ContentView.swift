@@ -88,7 +88,10 @@ struct ContentView: View {
         .task(id: [sourceLocale?.identifier, targetLanguage?.maximalIdentifier]) {
             pairStatus = nil
             guard let sourceLocale, let targetLanguage else { return }
-            pairStatus = await Translator.status(from: sourceLocale.language, to: targetLanguage)
+            let status = await Translator.status(from: sourceLocale.language, to: targetLanguage)
+            // 그사이 언어쌍이 바뀌어 취소됐으면 이전 쌍의 결과를 반영하지 않는다.
+            guard !Task.isCancelled else { return }
+            pairStatus = status
         }
         .translationTask(downloadConfiguration) { @concurrent session in
             // 시스템 다운로드 시트를 띄운다. 사용자가 취소해도 상태를 다시 확인한다.
