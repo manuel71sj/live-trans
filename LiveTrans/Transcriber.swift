@@ -27,7 +27,15 @@ final class Transcriber {
 
         Self.installTap(on: engine.inputNode, converter: converter, continuation: continuation)
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // 탭이 남으면 다음 시작에서 같은 버스에 중복 설치돼 앱이 종료된다.
+            engine.inputNode.removeTap(onBus: 0)
+            continuation.finish()
+            await analyzer.cancelAndFinishNow()
+            throw error
+        }
 
         self.analyzer = analyzer
         self.continuation = continuation
