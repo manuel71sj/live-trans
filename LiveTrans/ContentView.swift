@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var targetLanguage: Locale.Language?
     @State private var model = SessionModel()
     @State private var pairStatus: LanguageAvailability.Status?
+    @State private var downloadConfiguration: TranslationSession.Configuration?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -35,8 +36,13 @@ struct ContentView: View {
                 .disabled(model.isBusy || (!model.isRunning && pairStatus != .installed))
             }
             if pairStatus == .supported {
-                Text("번역 언어팩 설치가 필요합니다.")
-                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("번역 언어팩 설치가 필요합니다.")
+                        .foregroundStyle(.secondary)
+                    Button("설치") {
+                        downloadConfiguration = .init(source: sourceLocale?.language, target: targetLanguage)
+                    }
+                }
             } else if pairStatus == .unsupported {
                 Text("지원하지 않는 언어쌍입니다.")
                     .foregroundStyle(.secondary)
@@ -84,6 +90,17 @@ struct ContentView: View {
             guard let sourceLocale, let targetLanguage else { return }
             pairStatus = await Translator.status(from: sourceLocale.language, to: targetLanguage)
         }
+        .translationTask(downloadConfiguration) { @concurrent session in
+            // 시스템 다운로드 시트를 띄운다. 사용자가 취소해도 상태를 다시 확인한다.
+            try? await session.prepareTranslation()
+            await finishDownload()
+        }
+    }
+
+    private func finishDownload() async {
+        downloadConfiguration = nil
+        guard let sourceLocale, let targetLanguage else { return }
+        pairStatus = await Translator.status(from: sourceLocale.language, to: targetLanguage)
     }
 
     private nonisolated static func translationLanguages() async -> [Locale.Language] {
