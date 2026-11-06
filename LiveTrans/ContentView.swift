@@ -7,7 +7,7 @@ struct ContentView: View {
     @State private var targetLanguages: [Locale.Language] = []
     @State private var sourceLocale: Locale?
     @State private var targetLanguage: Locale.Language?
-    @State private var isRunning = false
+    @State private var model = SessionModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -22,13 +22,33 @@ struct ContentView: View {
                         Text(name(of: language)).tag(Optional(language))
                     }
                 }
-                Button(isRunning ? "중지" : "시작") {
-                    isRunning.toggle()
+                Button(model.isRunning ? "중지" : "시작") {
+                    Task {
+                        if model.isRunning {
+                            await model.stop()
+                        } else if let sourceLocale {
+                            await model.start(locale: sourceLocale)
+                        }
+                    }
                 }
+                .disabled(model.isBusy || sourceLocale == nil)
+            }
+            if !model.status.isEmpty {
+                Text(model.status)
+                    .foregroundStyle(.secondary)
             }
             ScrollView {
-                Text("")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.finalized.indices, id: \.self) { index in
+                        Text(model.finalized[index])
+                    }
+                    if !model.volatile.isEmpty {
+                        Text(model.volatile)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: 300)
         }
@@ -39,8 +59,8 @@ struct ContentView: View {
                 .sorted { name(of: $0) < name(of: $1) }
             targetLanguages = await Self.translationLanguages()
                 .sorted { name(of: $0) < name(of: $1) }
-            sourceLocale = sourceLocales.first
-            targetLanguage = targetLanguages.first
+            sourceLocale = sourceLocales.first { $0.language.languageCode == "ja" }
+            targetLanguage = targetLanguages.first { $0.languageCode == "ko" }
         }
     }
 
