@@ -11,6 +11,8 @@ final class SessionModel {
     }
 
     private static let batchSeconds = 30.0
+    /// 이 시간 동안 새 전사 결과가 없으면 대화가 끊긴 것으로 보고 바로 번역한다.
+    private static let silenceSeconds = 5.0
 
     private(set) var blocks: [Block] = []
     /// 아직 묶음으로 나가지 않은 확정 원문
@@ -23,6 +25,7 @@ final class SessionModel {
     private let transcriber = Transcriber()
     private var resultsTask: Task<Void, Never>?
     private var translationTask: Task<Void, Never>?
+    private var silenceTask: Task<Void, Never>?
     private var pendingStart: CMTime?
     private var sourceLanguage: Locale.Language?
     private var targetLanguage: Locale.Language?
@@ -52,6 +55,7 @@ final class SessionModel {
                         } else {
                             volatile = text
                         }
+                        restartSilenceTimer()
                     }
                 } catch {
                     status = error.localizedDescription
@@ -73,6 +77,8 @@ final class SessionModel {
         }
         await resultsTask?.value
         resultsTask = nil
+        silenceTask?.cancel()
+        silenceTask = nil
         flushPending()
         isRunning = false
     }
@@ -83,6 +89,16 @@ final class SessionModel {
         let start = pendingStart ?? range.start
         pendingStart = start
         if (range.end - start).seconds >= Self.batchSeconds {
+            flushPending()
+        }
+    }
+
+    /// 새 결과가 올 때마다 다시 걸어, 5초 동안 결과가 없으면 쌓인 원문을 바로 번역한다.
+    private func restartSilenceTimer() {
+        silenceTask?.cancel()
+        silenceTask = Task {
+            try? await Task.sleep(for: .seconds(Self.silenceSeconds))
+            guard !Task.isCancelled else { return }
             flushPending()
         }
     }
