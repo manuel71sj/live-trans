@@ -41,6 +41,11 @@ struct ContentView: View {
                     }
                 }
                 .disabled(model.isBusy || (!model.isRunning && pairStatus != .installed))
+                Button("원문 복사") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(allSourceText, forType: .string)
+                }
+                .disabled(allSourceText.isEmpty)
             }
             if pairStatus == .supported {
                 HStack {
@@ -128,6 +133,15 @@ struct ContentView: View {
         downloadConfiguration = nil
         guard let sourceLocale, let targetLanguage else { return }
         pairStatus = await Translator.status(from: sourceLocale.language, to: targetLanguage)
+    }
+
+    /// 블록 원문과 진행 중 확정 원문을 문단마다 빈 줄로 구분한다. 확정 전(전사 중) 텍스트는 뺀다.
+    private var allSourceText: String {
+        var paragraphs = model.blocks.map(\.source)
+        if !model.pending.isEmpty {
+            paragraphs.append(model.pending.joined(separator: " "))
+        }
+        return paragraphs.joined(separator: "\n\n")
     }
 
     private func color(of stage: SessionModel.Block.Stage) -> Color {
