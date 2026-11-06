@@ -4,7 +4,17 @@ import Observation
 @Observable
 @MainActor
 final class SessionModel {
-    private(set) var finalized: [String] = []
+    struct Block {
+        let source: String
+        /// nil이면 번역 중
+        var translation: String?
+    }
+
+    private static let batchSeconds = 30.0
+
+    private(set) var blocks: [Block] = []
+    /// 아직 묶음으로 나가지 않은 확정 원문
+    private(set) var pending: [String] = []
     private(set) var volatile = ""
     private(set) var status = ""
     private(set) var isRunning = false
@@ -12,8 +22,14 @@ final class SessionModel {
 
     private let transcriber = Transcriber()
     private var resultsTask: Task<Void, Never>?
+    private var translationTask: Task<Void, Never>?
+    private var pendingStart: CMTime?
+    private var sourceLanguage: Locale.Language?
+    private var targetLanguage: Locale.Language?
 
-    func start(locale: Locale) async {
+    func start(locale: Locale, target: Locale.Language) async {
+        sourceLanguage = locale.language
+        targetLanguage = target
         isBusy = true
         defer { isBusy = false }
 
@@ -31,8 +47,8 @@ final class SessionModel {
                     for try await result in results {
                         let text = String(result.text.characters)
                         if result.isFinal {
-                            finalized.append(text)
                             volatile = ""
+                            appendFinal(text, range: result.range)
                         } else {
                             volatile = text
                         }
@@ -57,6 +73,37 @@ final class SessionModel {
         }
         await resultsTask?.value
         resultsTask = nil
+        flushPending()
         isRunning = false
+    }
+
+    /// 묶음의 첫 결과 시작부터 이번 결과 끝까지가 30초 이상이면 묶음을 번역으로 내보낸다.
+    private func appendFinal(_ text: String, range: CMTimeRange) {
+        pending.append(text)
+        let start = pendingStart ?? range.start
+        pendingStart = start
+        if (range.end - start).seconds >= Self.batchSeconds {
+            flushPending()
+        }
+    }
+
+    /// 남은 확정 원문을 한 블록으로 내보내고, 앞 블록 번역이 끝난 뒤 번역한다.
+    private func flushPending() {
+        guard !pending.isEmpty, let sourceLanguage, let targetLanguage else { return }
+        let text = pending.joined(separator: " ")
+        pending = []
+        pendingStart = nil
+        blocks.append(Block(source: text))
+        let index = blocks.count - 1
+
+        let previous = translationTask
+        translationTask = Task {
+            await previous?.value
+            do {
+                blocks[index].translation = try await Translator.translate(text, from: sourceLanguage, to: targetLanguage)
+            } catch {
+                blocks[index].translation = "번역 실패: \(error.localizedDescription)"
+            }
+        }
     }
 }

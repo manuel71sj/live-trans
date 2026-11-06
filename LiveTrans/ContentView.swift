@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var sourceLocale: Locale?
     @State private var targetLanguage: Locale.Language?
     @State private var model = SessionModel()
+    @State private var pairStatus: LanguageAvailability.Status?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -26,12 +27,19 @@ struct ContentView: View {
                     Task {
                         if model.isRunning {
                             await model.stop()
-                        } else if let sourceLocale {
-                            await model.start(locale: sourceLocale)
+                        } else if let sourceLocale, let targetLanguage {
+                            await model.start(locale: sourceLocale, target: targetLanguage)
                         }
                     }
                 }
-                .disabled(model.isBusy || sourceLocale == nil)
+                .disabled(model.isBusy || (!model.isRunning && pairStatus != .installed))
+            }
+            if pairStatus == .supported {
+                Text("번역 언어팩 설치가 필요합니다.")
+                    .foregroundStyle(.secondary)
+            } else if pairStatus == .unsupported {
+                Text("지원하지 않는 언어쌍입니다.")
+                    .foregroundStyle(.secondary)
             }
             if !model.status.isEmpty {
                 Text(model.status)
@@ -39,8 +47,17 @@ struct ContentView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(model.finalized.indices, id: \.self) { index in
-                        Text(model.finalized[index])
+                    ForEach(model.blocks.indices, id: \.self) { index in
+                        let block = model.blocks[index]
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(block.source)
+                            Text(block.translation ?? "번역 중…")
+                                .foregroundStyle(.blue)
+                        }
+                        Divider()
+                    }
+                    ForEach(model.pending.indices, id: \.self) { index in
+                        Text(model.pending[index])
                     }
                     if !model.volatile.isEmpty {
                         Text(model.volatile)
@@ -61,6 +78,11 @@ struct ContentView: View {
                 .sorted { name(of: $0) < name(of: $1) }
             sourceLocale = sourceLocales.first { $0.language.languageCode == "ja" }
             targetLanguage = targetLanguages.first { $0.languageCode == "ko" }
+        }
+        .task(id: [sourceLocale?.identifier, targetLanguage?.maximalIdentifier]) {
+            pairStatus = nil
+            guard let sourceLocale, let targetLanguage else { return }
+            pairStatus = await Translator.status(from: sourceLocale.language, to: targetLanguage)
         }
     }
 
