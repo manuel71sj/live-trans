@@ -51,6 +51,12 @@ struct ContentView: View {
                 Text(model.status)
                     .foregroundStyle(.secondary)
             }
+            HStack(spacing: 12) {
+                Text("번역 중").foregroundStyle(.secondary)
+                Text("1차 번역").foregroundStyle(.orange)
+                Text("보정본").foregroundStyle(.blue)
+            }
+            .font(.caption)
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(model.blocks.indices, id: \.self) { index in
@@ -58,7 +64,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(block.source)
                             Text(block.translation ?? "번역 중…")
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(color(of: block.stage))
                         }
                         Divider()
                     }
@@ -104,6 +110,14 @@ struct ContentView: View {
         downloadConfiguration = nil
         guard let sourceLocale, let targetLanguage else { return }
         pairStatus = await Translator.status(from: sourceLocale.language, to: targetLanguage)
+    }
+
+    private func color(of stage: SessionModel.Block.Stage) -> Color {
+        switch stage {
+        case .translating: .secondary
+        case .draft: .orange
+        case .refined: .blue
+        }
     }
 
     private nonisolated static func translationLanguages() async -> [Locale.Language] {

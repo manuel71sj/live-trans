@@ -5,9 +5,13 @@ import Observation
 @MainActor
 final class SessionModel {
     struct Block {
+        enum Stage {
+            case translating, draft, refined
+        }
+
         let source: String
-        /// nil이면 번역 중
         var translation: String?
+        var stage: Stage = .translating
     }
 
     private static let batchSeconds = 30.0
@@ -109,7 +113,8 @@ final class SessionModel {
         }
     }
 
-    /// 남은 확정 원문을 한 블록으로 내보내고, 앞 블록 번역이 끝난 뒤 번역한다.
+    /// 남은 확정 원문을 한 블록으로 내보내고, 앞 블록 번역이 끝난 뒤
+    /// 1차 번역 → 후보정 순으로 처리한다. 후보정이 실패하면 1차 번역을 그대로 둔다.
     private func flushPending() {
         guard !pending.isEmpty, let sourceLanguage, let targetLanguage else { return }
         let text = pending.joined(separator: " ")
@@ -121,10 +126,27 @@ final class SessionModel {
         let previous = translationTask
         translationTask = Task {
             await previous?.value
+            let draft: String
             do {
-                blocks[index].translation = try await Translator.translate(text, from: sourceLanguage, to: targetLanguage)
+                draft = try await Translator.translate(text, from: sourceLanguage, to: targetLanguage)
             } catch {
                 blocks[index].translation = "번역 실패: \(error.localizedDescription)"
+                blocks[index].stage = .draft
+                return
+            }
+            blocks[index].translation = draft
+            blocks[index].stage = .draft
+
+            let context = index > 0 ? blocks[index - 1] : nil
+            let refined = try? await Translator.refine(
+                source: text,
+                draft: draft,
+                previous: context.map { ($0.source, $0.translation ?? "") },
+                target: targetLanguage
+            )
+            if let refined, !refined.isEmpty {
+                blocks[index].translation = refined
+                blocks[index].stage = .refined
             }
         }
     }
