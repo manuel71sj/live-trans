@@ -46,7 +46,7 @@ LiveTransApp (SwiftUI App)
 
 ### 1단계 — 프로젝트 골격
 
-- `project.yml` (macOS App, SwiftUI, 배포 타깃 27.0, 번들 ID `kr.manuel71.LiveTrans` 가정)
+- `project.yml` (macOS App, SwiftUI, 배포 타깃 27.0, 번들 ID `kr.manuel71.LiveTrans`)
 - `Info.plist`: `NSMicrophoneUsageDescription`
 - 엔타이틀먼트: App Sandbox + `com.apple.security.device.audio-input`
 - `ContentView`: 원문 언어·번역 언어 선택(Picker), 시작/중지 버튼, 비어 있는 스크롤 텍스트 영역

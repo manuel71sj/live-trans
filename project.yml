@@ -1,0 +1,26 @@
+name: LiveTrans
+options:
+  bundleIdPrefix: kr.manuel71
+  deploymentTarget:
+    macOS: "27.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+targets:
+  LiveTrans:
+    type: application
+    platform: macOS
+    sources: [LiveTrans]
+    info:
+      path: LiveTrans/Info.plist
+      properties:
+        NSMicrophoneUsageDescription: 말한 내용을 전사하고 번역하기 위해 마이크를 사용합니다.
+    entitlements:
+      path: LiveTrans/LiveTrans.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.device.audio-input: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: kr.manuel71.LiveTrans
+        CODE_SIGN_IDENTITY: "-"
