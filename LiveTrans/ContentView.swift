@@ -11,6 +11,9 @@ struct ContentView: View {
     @State private var pairStatus: LanguageAvailability.Status?
     @State private var downloadConfiguration: TranslationSession.Configuration?
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
+    @AppStorage(SettingsKey.fontFamily) private var fontFamily = ""
+    @AppStorage(SettingsKey.fontSize) private var fontSize = 15.0
+    @AppStorage(SettingsKey.inputDeviceUID) private var inputDeviceUID = ""
 
     /// 스크롤 추적용: 내용 높이와, 그 시점에 맨 아래를 보고 있었는지
     private struct ScrollState: Equatable {
@@ -72,7 +75,9 @@ struct ContentView: View {
                         if model.isRunning {
                             await model.stop()
                         } else if let sourceLocale, let targetLanguage {
-                            await model.start(locale: sourceLocale, target: targetLanguage)
+                            // 저장된 장치가 지금 연결돼 있지 않으면 시스템 기본 입력 장치로 듣는다.
+                            let device = AudioInputDevices.all().first { $0.uid == inputDeviceUID }
+                            await model.start(locale: sourceLocale, target: targetLanguage, inputDevice: device?.id)
                         }
                     }
                 } label: {
@@ -135,11 +140,11 @@ struct ContentView: View {
                     let block = model.blocks[index]
                     columns(
                         source: Text(block.source)
-                            .font(Typography.source)
+                            .font(sourceFont)
                             .foregroundStyle(Palette.foreground)
                             .lineSpacing(5),
                         target: Text(block.translation ?? "번역 중…")
-                            .font(Typography.translation)
+                            .font(translationFont)
                             .lineSpacing(4)
                             .foregroundStyle(color(of: block.stage))
                             // 색을 못 구분해도 알 수 있게 1차 번역에만 점선 밑줄을 긋는다.
@@ -170,6 +175,10 @@ struct ContentView: View {
         }
     }
 
+    /// 설정의 본문 글꼴·크기. 번역은 원문보다 한 단계(2pt) 크다.
+    private var sourceFont: Font { Typography.body(family: fontFamily, size: fontSize) }
+    private var translationFont: Font { Typography.body(family: fontFamily, size: fontSize + 2) }
+
     private var showsLiveRow: Bool {
         model.isRunning || !model.pending.isEmpty || !model.volatile.isEmpty
     }
@@ -189,7 +198,7 @@ struct ContentView: View {
                         .foregroundStyle(Palette.foreground)
                 }
             }
-            .font(Typography.source)
+            .font(sourceFont)
             .lineSpacing(5),
             target: Text(model.isRunning ? "듣는 중" : "")
                 .font(Typography.label)
@@ -212,9 +221,9 @@ struct ContentView: View {
         VStack(spacing: 0) {
             columns(
                 source: Text("시작을 누르면 말한 내용이 여기에 쌓입니다.")
-                    .font(Typography.source),
+                    .font(sourceFont),
                 target: Text("번역은 문단마다 이쪽에 붙습니다.")
-                    .font(Typography.translation)
+                    .font(translationFont)
             )
             .foregroundStyle(Palette.mutedForeground)
             Spacer(minLength: 0)
@@ -300,8 +309,12 @@ struct ContentView: View {
 
 /// design-system/livetrans/MASTER.md: 제목은 세리프, 본문은 산세리프(번역이 한 단계 크다).
 private enum Typography {
-    static let source = Font.system(size: 15)
-    static let translation = Font.system(size: 17)
+    /// 원문·번역 본문. 글꼴 가족이 비었거나 설치돼 있지 않으면 시스템 산세리프로 쓴다.
+    @MainActor
+    static func body(family: String, size: CGFloat) -> Font {
+        NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size).map { Font($0) } ?? .system(size: size)
+    }
+
     /// "듣는 중"처럼 본문 옆에 붙는 짧은 표시
     static let label = Font.system(size: 13, weight: .medium)
     /// 하단 상태 줄과 범례

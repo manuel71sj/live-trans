@@ -38,7 +38,8 @@ final class SessionModel {
     private var sourceLanguage: Locale.Language?
     private var targetLanguage: Locale.Language?
 
-    func start(locale: Locale, target: Locale.Language) async {
+    /// inputDevice가 nil이면 시스템 기본 입력 장치로 듣는다.
+    func start(locale: Locale, target: Locale.Language, inputDevice: AudioDeviceID?) async {
         sourceLanguage = locale.language
         targetLanguage = target
         isBusy = true
@@ -50,7 +51,7 @@ final class SessionModel {
         }
         status = "음성 모델 준비 중…"
         do {
-            let results = try await transcriber.start(locale: locale)
+            let results = try await transcriber.start(locale: locale, inputDevice: inputDevice)
             status = ""
             isRunning = true
             resultsTask = Task {

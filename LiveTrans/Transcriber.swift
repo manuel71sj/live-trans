@@ -4,12 +4,13 @@ import Speech
 /// 마이크 입력을 SpeechAnalyzer로 전사한다.
 @MainActor
 final class Transcriber {
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private var analyzer: SpeechAnalyzer?
     private var continuation: AsyncStream<AnalyzerInput>.Continuation?
 
     /// 음성 모델을 준비하고 전사를 시작한다. 반환된 시퀀스는 중지 후 확정 결과까지 내보내고 끝난다.
-    func start(locale: Locale) async throws -> some AsyncSequence<SpeechTranscriber.Result, any Error> {
+    /// inputDevice가 nil이면 시스템 기본 입력 장치를 쓴다.
+    func start(locale: Locale, inputDevice: AudioDeviceID?) async throws -> some AsyncSequence<SpeechTranscriber.Result, any Error> {
         let transcriber = SpeechTranscriber(
             locale: locale,
             transcriptionOptions: [],
@@ -18,6 +19,13 @@ final class Transcriber {
         )
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
             try await request.downloadAndInstall()
+        }
+
+        // 시작마다 엔진을 새로 만들어, 이전에 지정한 장치가 남지 않고 기본 장치로 돌아가게 한다.
+        // 분석기를 띄우기 전에 지정해 실패해도 정리할 것이 없게 한다.
+        engine = AVAudioEngine()
+        if let inputDevice {
+            try Self.setDevice(inputDevice, of: engine.inputNode)
         }
 
         let converter = try await AnalyzerInputConverter.converter(compatibleWith: [transcriber])
@@ -49,6 +57,24 @@ final class Transcriber {
         continuation = nil
         try await analyzer?.finalizeAndFinishThroughEndOfInput()
         analyzer = nil
+    }
+
+    /// 탭을 걸기 전에 지정해야 입력 형식이 그 장치 기준으로 잡힌다.
+    private static func setDevice(_ device: AudioDeviceID, of node: AVAudioInputNode) throws {
+        var device = device
+        let status = node.withAudioUnit { unit in
+            AudioUnitSetProperty(
+                unit!,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &device,
+                UInt32(MemoryLayout<AudioDeviceID>.size)
+            )
+        }
+        guard status == noErr else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
     }
 
     /// 탭 콜백은 오디오 스레드에서 불리므로 메인 액터 밖에서 만든다.
