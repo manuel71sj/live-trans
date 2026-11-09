@@ -142,6 +142,8 @@ struct ContentView: View {
                             .font(Typography.translation)
                             .lineSpacing(4)
                             .foregroundStyle(color(of: block.stage))
+                            // 색을 못 구분해도 알 수 있게 1차 번역에만 점선 밑줄을 긋는다.
+                            .underline(block.stage == .draft, pattern: .dot, color: Palette.draft)
                             // 보정본이 오면 호박색이 블루로 바뀌는 것을 보여 준다.
                             .animation(.easeOut(duration: 0.6), value: block.stage)
                     )
@@ -190,14 +192,14 @@ struct ContentView: View {
             .font(Typography.source)
             .lineSpacing(5),
             target: Text(model.isRunning ? "듣는 중" : "")
-                .font(.system(size: 13, weight: .medium))
+                .font(Typography.label)
                 .foregroundStyle(Palette.onAir)
         )
         .overlay(alignment: .top) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: 9))
-                .foregroundStyle(Palette.onAir)
-                .symbolEffect(.pulse, isActive: model.isRunning)
+            // 듣는 중이라는 건 글자가 알려 주므로 표시등은 깜빡이지 않고 켜져만 있다.
+            Circle()
+                .fill(Palette.onAir)
+                .frame(width: 9, height: 9)
                 .frame(width: 17, height: 17)
                 .background(Circle().fill(Palette.surface))
                 .opacity(model.isRunning ? 1 : 0)
@@ -205,15 +207,24 @@ struct ContentView: View {
         }
     }
 
+    /// 시작 전에도 실제 화면과 같은 2열 첫 줄 자리에 무엇이 쌓일지 적어 둔다.
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Text("시작을 누르고 말해 보세요.")
-                .font(Typography.heading(size: 22))
-                .foregroundStyle(Palette.foreground)
-            Text("말한 내용은 왼쪽에, 번역은 오른쪽에 문단마다 쌓입니다.")
-                .foregroundStyle(Palette.mutedForeground)
+        VStack(spacing: 0) {
+            columns(
+                source: Text("시작을 누르면 말한 내용이 여기에 쌓입니다.")
+                    .font(Typography.source),
+                target: Text("번역은 문단마다 이쪽에 붙습니다.")
+                    .font(Typography.translation)
+            )
+            .foregroundStyle(Palette.mutedForeground)
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            Rectangle()
+                .fill(Palette.rule)
+                .frame(width: 1)
+        }
     }
 
     /// 왼쪽은 설치·지원·상태 안내, 오른쪽은 번역 단계 색 범례.
@@ -235,11 +246,12 @@ struct ContentView: View {
             HStack(spacing: 14) {
                 Text("번역 중").foregroundStyle(Palette.translating)
                 Text("1차 번역").foregroundStyle(Palette.draft)
+                    .underline(pattern: .dot, color: Palette.draft)
                 Text("보정본").foregroundStyle(Palette.refined)
             }
             .fontWeight(.medium)
         }
-        .font(.system(size: 12))
+        .font(Typography.caption)
         .foregroundStyle(Palette.mutedForeground)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -274,12 +286,15 @@ struct ContentView: View {
         await LanguageAvailability().supportedLanguages
     }
 
+    /// 화면 문구가 한국어이므로 언어 이름도 한국어로 보인다.
+    private static let displayLocale = Locale(identifier: "ko")
+
     private func name(of locale: Locale) -> String {
-        Locale.current.localizedString(forIdentifier: locale.identifier) ?? locale.identifier
+        Self.displayLocale.localizedString(forIdentifier: locale.identifier) ?? locale.identifier
     }
 
     private func name(of language: Locale.Language) -> String {
-        Locale.current.localizedString(forIdentifier: language.minimalIdentifier) ?? language.minimalIdentifier
+        Self.displayLocale.localizedString(forIdentifier: language.minimalIdentifier) ?? language.minimalIdentifier
     }
 }
 
@@ -287,6 +302,10 @@ struct ContentView: View {
 private enum Typography {
     static let source = Font.system(size: 15)
     static let translation = Font.system(size: 17)
+    /// "듣는 중"처럼 본문 옆에 붙는 짧은 표시
+    static let label = Font.system(size: 13, weight: .medium)
+    /// 하단 상태 줄과 범례
+    static let caption = Font.system(size: 12)
 
     /// 시스템 세리프에 일본어·한국어 명조를 대체 글꼴로 지정한다.
     /// 지정하지 않으면 한자는 명조, 가나 일부는 고딕으로 섞여 나온다.
@@ -297,19 +316,19 @@ private enum Typography {
     }
 }
 
-/// design-system/livetrans/MASTER.md의 컬러 토큰. 글자색은 라이트·다크 모두 대비 4.5:1 이상이다.
-/// 단계 색은 블루·호박색 짝이라 적록 색각 이상에서도 구분된다.
+/// design-system/livetrans/MASTER.md의 컬러 토큰. 잉크 블루(OKLCH 색상각 250°) 하나에서 밝기·채도만 바꿔 만들었다.
+/// 글자색은 라이트·다크 모두 대비 5:1 이상이고, 단계 색은 블루·호박색 짝이라 적록 색각 이상에서도 구분된다.
 private enum Palette {
-    static let primary = dynamic(light: 0x0369A1, dark: 0x38BDF8)
-    static let background = dynamic(light: 0xF8FAFC, dark: 0x0F172A)
-    static let surface = dynamic(light: 0xFFFFFF, dark: 0x131E33)
-    static let foreground = dynamic(light: 0x0F172A, dark: 0xE2E8F0)
-    static let mutedForeground = dynamic(light: 0x64748B, dark: 0x94A3B8)
-    static let rule = dynamic(light: 0xE2E8F0, dark: 0x1E293B)
+    static let primary = dynamic(light: 0x165E98, dark: 0x6BBAF0)
+    static let background = dynamic(light: 0xF2F6FB, dark: 0x0E141E)
+    static let surface = dynamic(light: 0xFBFDFF, dark: 0x141C27)
+    static let foreground = dynamic(light: 0x172232, dark: 0xDFE5EC)
+    static let mutedForeground = dynamic(light: 0x5F6A77, dark: 0x969FAB)
+    static let rule = dynamic(light: 0xDAE0E7, dark: 0x2B3340)
     static let translating = mutedForeground
-    static let draft = dynamic(light: 0xB45309, dark: 0xFBBF24)
+    static let draft = dynamic(light: 0x97570D, dark: 0xEEB154)
     static let refined = primary
-    static let onAir = dynamic(light: 0xDC2626, dark: 0xF87171)
+    static let onAir = dynamic(light: 0xC52C2A, dark: 0xF2716A)
 
     private static func dynamic(light: UInt32, dark: UInt32) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
