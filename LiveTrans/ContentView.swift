@@ -28,18 +28,20 @@ struct ContentView: View {
                 target: Text(targetLanguage.map(name(of:)) ?? "번역"),
                 verticalPadding: 8
             )
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.secondary)
-            Divider()
+            .font(Typography.heading(size: 13))
+            .foregroundStyle(Palette.mutedForeground)
+            .background(Palette.background)
+            Palette.rule.frame(height: 1)
             if model.blocks.isEmpty && !showsLiveRow {
                 emptyState
             } else {
                 transcript
             }
-            Divider()
+            Palette.rule.frame(height: 1)
             footer
         }
-        .background(Palette.paper)
+        .background(Palette.surface)
+        .tint(Palette.primary)
         .frame(minWidth: 760, minHeight: 420)
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
@@ -134,12 +136,13 @@ struct ContentView: View {
                     columns(
                         source: Text(block.source)
                             .font(Typography.source)
+                            .foregroundStyle(Palette.foreground)
                             .lineSpacing(5),
                         target: Text(block.translation ?? "번역 중…")
                             .font(Typography.translation)
                             .lineSpacing(4)
                             .foregroundStyle(color(of: block.stage))
-                            // 보정본이 오면 호박색이 파랑으로 바뀌는 것을 보여 준다.
+                            // 보정본이 오면 호박색이 블루로 바뀌는 것을 보여 준다.
                             .animation(.easeOut(duration: 0.6), value: block.stage)
                     )
                 }
@@ -178,9 +181,10 @@ struct ContentView: View {
             source: Group {
                 if isEmpty {
                     Text("말하면 여기에 받아 적습니다.")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Palette.mutedForeground)
                 } else {
-                    Text("\(confirmed)\(confirmed.isEmpty ? "" : " ")\(Text(model.volatile).foregroundStyle(.secondary))")
+                    Text("\(confirmed)\(confirmed.isEmpty ? "" : " ")\(Text(model.volatile).foregroundStyle(Palette.mutedForeground))")
+                        .foregroundStyle(Palette.foreground)
                 }
             }
             .font(Typography.source)
@@ -195,7 +199,7 @@ struct ContentView: View {
                 .foregroundStyle(Palette.onAir)
                 .symbolEffect(.pulse, isActive: model.isRunning)
                 .frame(width: 17, height: 17)
-                .background(Circle().fill(Palette.paper))
+                .background(Circle().fill(Palette.surface))
                 .opacity(model.isRunning ? 1 : 0)
                 .padding(.top, 15)
         }
@@ -204,9 +208,10 @@ struct ContentView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Text("시작을 누르고 말해 보세요.")
-                .font(.system(size: 20, design: .serif))
+                .font(Typography.heading(size: 22))
+                .foregroundStyle(Palette.foreground)
             Text("말한 내용은 왼쪽에, 번역은 오른쪽에 문단마다 쌓입니다.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.mutedForeground)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -235,10 +240,10 @@ struct ContentView: View {
             .fontWeight(.medium)
         }
         .font(.system(size: 12))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Palette.mutedForeground)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(.bar)
+        .background(Palette.background)
     }
 
     private func finishDownload() async {
@@ -256,7 +261,7 @@ struct ContentView: View {
         return paragraphs.joined(separator: "\n\n")
     }
 
-    /// 번역 중은 회색, 1차 번역은 호박색, 보정본은 파랑.
+    /// 번역 중은 보조 회색, 1차 번역은 호박색, 보정본은 브랜드 블루.
     private func color(of stage: SessionModel.Block.Stage) -> Color {
         switch stage {
         case .translating: Palette.translating
@@ -278,28 +283,33 @@ struct ContentView: View {
     }
 }
 
-/// 원문은 세리프, 번역은 한 단계 큰 산세리프로 두어 글꼴만으로 두 열을 구분한다.
+/// design-system/livetrans/MASTER.md: 제목은 세리프, 본문은 산세리프(번역이 한 단계 크다).
 private enum Typography {
+    static let source = Font.system(size: 15)
+    static let translation = Font.system(size: 17)
+
     /// 시스템 세리프에 일본어·한국어 명조를 대체 글꼴로 지정한다.
     /// 지정하지 않으면 한자는 명조, 가나 일부는 고딕으로 섞여 나온다.
-    static let source: Font = {
-        let size: CGFloat = 15
-        let serif = NSFont.systemFont(ofSize: size).fontDescriptor.withDesign(.serif)!
-        let cascade = ["HiraMinProN-W3", "AppleMyungjo"].map { NSFontDescriptor(name: $0, size: size) }
+    static func heading(size: CGFloat) -> Font {
+        let serif = NSFont.systemFont(ofSize: size, weight: .semibold).fontDescriptor.withDesign(.serif)!
+        let cascade = ["HiraMinProN-W6", "AppleMyungjo"].map { NSFontDescriptor(name: $0, size: size) }
         return Font(NSFont(descriptor: serif.addingAttributes([.cascadeList: cascade]), size: size)!)
-    }()
-    static let translation = Font.system(size: 17)
+    }
 }
 
-/// 번역 단계 세 색과 송출등(듣는 중)만 직접 정하고 나머지는 시스템 색을 따른다.
-/// 단계 색은 색상 자체를 달리하고, 적록 색각 이상에서도 구분되는 호박색·파랑 짝을 쓴다.
+/// design-system/livetrans/MASTER.md의 컬러 토큰. 글자색은 라이트·다크 모두 대비 4.5:1 이상이다.
+/// 단계 색은 블루·호박색 짝이라 적록 색각 이상에서도 구분된다.
 private enum Palette {
-    static let translating = dynamic(light: 0x6E747E, dark: 0x9AA0AA)
-    static let draft = dynamic(light: 0x9A5B00, dark: 0xE3A442)
-    static let refined = dynamic(light: 0x1F4FA8, dark: 0x7FA7FF)
-    static let onAir = dynamic(light: 0xC62F28, dark: 0xFF5D52)
-    static let rule = Color(nsColor: .separatorColor)
-    static let paper = Color(nsColor: .textBackgroundColor)
+    static let primary = dynamic(light: 0x0369A1, dark: 0x38BDF8)
+    static let background = dynamic(light: 0xF8FAFC, dark: 0x0F172A)
+    static let surface = dynamic(light: 0xFFFFFF, dark: 0x131E33)
+    static let foreground = dynamic(light: 0x0F172A, dark: 0xE2E8F0)
+    static let mutedForeground = dynamic(light: 0x64748B, dark: 0x94A3B8)
+    static let rule = dynamic(light: 0xE2E8F0, dark: 0x1E293B)
+    static let translating = mutedForeground
+    static let draft = dynamic(light: 0xB45309, dark: 0xFBBF24)
+    static let refined = primary
+    static let onAir = dynamic(light: 0xDC2626, dark: 0xF87171)
 
     private static func dynamic(light: UInt32, dark: UInt32) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
