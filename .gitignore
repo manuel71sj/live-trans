@@ -2,3 +2,4 @@
 build/
 DerivedData/
 .omc/
+.DS_Store
