@@ -14,6 +14,10 @@ struct ContentView: View {
     @AppStorage(SettingsKey.fontFamily) private var fontFamily = ""
     @AppStorage(SettingsKey.fontSize) private var fontSize = 15.0
     @AppStorage(SettingsKey.inputDeviceUID) private var inputDeviceUID = ""
+    /// 듣는 중일 때 시작하면서 실제로 연 입력 장치
+    @State private var runningInput: AudioInputDevice?
+    /// 멈춰 있을 때 다음 시작에 쓸 입력 장치
+    @State private var nextInput: AudioInputDevice?
 
     /// 스크롤 추적용: 내용 높이와, 그 시점에 맨 아래를 보고 있었는지
     private struct ScrollState: Equatable {
@@ -77,6 +81,7 @@ struct ContentView: View {
                         } else if let sourceLocale, let targetLanguage {
                             // 저장된 장치가 지금 연결돼 있지 않으면 시스템 기본 입력 장치로 듣는다.
                             let device = AudioInputDevices.all().first { $0.uid == inputDeviceUID }
+                            runningInput = device ?? AudioInputDevices.systemDefault()
                             await model.start(locale: sourceLocale, target: targetLanguage, inputDevice: device?.id)
                         }
                     }
@@ -103,6 +108,13 @@ struct ContentView: View {
             // 그사이 언어쌍이 바뀌어 취소됐으면 이전 쌍의 결과를 반영하지 않는다.
             guard !Task.isCancelled else { return }
             pairStatus = status
+        }
+        // 설정을 바꾸거나 장치가 연결·분리되거나 시스템 기본 입력이 바뀌면 다시 고른다.
+        .task(id: inputDeviceUID) {
+            resolveNextInput()
+            for await _ in AudioInputDevices.changes() {
+                resolveNextInput()
+            }
         }
         .translationTask(downloadConfiguration) { @concurrent session in
             // 시스템 다운로드 시트를 띄운다. 사용자가 취소해도 상태를 다시 확인한다.
@@ -236,9 +248,23 @@ struct ContentView: View {
         }
     }
 
-    /// 왼쪽은 설치·지원·상태 안내, 오른쪽은 번역 단계 색 범례.
+    /// 듣는 중에는 시작할 때 연 장치, 멈춰 있을 때는 다음 시작에 쓸 장치.
+    private var currentInput: AudioInputDevice? {
+        model.isRunning ? runningInput : nextInput
+    }
+
+    /// 고른 장치가 연결돼 있으면 그 장치, 아니면 시스템 기본 입력 장치
+    private func resolveNextInput() {
+        nextInput = AudioInputDevices.all().first { $0.uid == inputDeviceUID } ?? AudioInputDevices.systemDefault()
+    }
+
+    /// 왼쪽은 입력 장치와 설치·지원·상태 안내, 오른쪽은 번역 단계 색 범례.
     private var footer: some View {
         HStack(spacing: 12) {
+            if let currentInput {
+                Label(currentInput.name, systemImage: "mic")
+                    .help("입력 장치")
+            }
             if pairStatus == .supported {
                 Text("번역 언어팩 설치가 필요합니다.")
                 Button("설치") {

@@ -23,13 +23,57 @@ enum AudioInputDevices {
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids) == noErr else {
             return []
         }
-        return ids.compactMap { id in
-            guard hasInput(id),
-                  let uid = string(kAudioDevicePropertyDeviceUID, of: id),
-                  let name = string(kAudioObjectPropertyName, of: id)
-            else { return nil }
-            return AudioInputDevice(id: id, uid: uid, name: name)
+        return ids.compactMap(device)
+    }
+
+    /// 시스템 설정 > 사운드 > 입력에서 고른 기본 입력 장치
+    static func systemDefault() -> AudioInputDevice? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id) == noErr else {
+            return nil
         }
+        return device(id)
+    }
+
+    /// 장치가 연결·분리되거나 시스템 기본 입력 장치가 바뀔 때마다 알린다.
+    static func changes() -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            let selectors = [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice]
+            // 등록과 해제에 같은 블록 객체를 넘겨야 해제된다. 만든 뒤 바뀌지 않으므로 해제 클로저에 넘겨도 안전하다.
+            nonisolated(unsafe) let block: AudioObjectPropertyListenerBlock = { _, _ in continuation.yield() }
+            for selector in selectors {
+                var address = systemAddress(selector)
+                AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, block)
+            }
+            continuation.onTermination = { _ in
+                for selector in selectors {
+                    var address = systemAddress(selector)
+                    AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, block)
+                }
+            }
+        }
+    }
+
+    private static func systemAddress(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
+    private static func device(_ id: AudioDeviceID) -> AudioInputDevice? {
+        guard hasInput(id),
+              let uid = string(kAudioDevicePropertyDeviceUID, of: id),
+              let name = string(kAudioObjectPropertyName, of: id)
+        else { return nil }
+        return AudioInputDevice(id: id, uid: uid, name: name)
     }
 
     private static func hasInput(_ id: AudioDeviceID) -> Bool {
