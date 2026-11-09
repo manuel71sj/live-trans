@@ -139,7 +139,7 @@ struct ContentView: View {
                             .font(Typography.translation)
                             .lineSpacing(4)
                             .foregroundStyle(color(of: block.stage))
-                            // 보정본이 오면 연필색이 잉크색으로 바뀌는 것을 보여 준다.
+                            // 보정본이 오면 호박색이 파랑으로 바뀌는 것을 보여 준다.
                             .animation(.easeOut(duration: 0.6), value: block.stage)
                     )
                 }
@@ -228,9 +228,9 @@ struct ContentView: View {
             }
             Spacer(minLength: 16)
             HStack(spacing: 14) {
-                Text("번역 중").foregroundStyle(.tertiary)
-                Text("1차 번역").foregroundStyle(Palette.pencil)
-                Text("보정본").foregroundStyle(Palette.ink)
+                Text("번역 중").foregroundStyle(Palette.translating)
+                Text("1차 번역").foregroundStyle(Palette.draft)
+                Text("보정본").foregroundStyle(Palette.refined)
             }
             .fontWeight(.medium)
         }
@@ -256,12 +256,12 @@ struct ContentView: View {
         return paragraphs.joined(separator: "\n\n")
     }
 
-    /// 번역 중은 옅게, 1차 번역은 연필색, 보정본은 잉크색.
+    /// 번역 중은 회색, 1차 번역은 호박색, 보정본은 파랑.
     private func color(of stage: SessionModel.Block.Stage) -> Color {
         switch stage {
-        case .translating: Color(nsColor: .tertiaryLabelColor)
-        case .draft: Palette.pencil
-        case .refined: Palette.ink
+        case .translating: Palette.translating
+        case .draft: Palette.draft
+        case .refined: Palette.refined
         }
     }
 
@@ -291,10 +291,12 @@ private enum Typography {
     static let translation = Font.system(size: 17)
 }
 
-/// 연필(1차 번역)과 잉크(보정본), 송출등(듣는 중)만 직접 정하고 나머지는 시스템 색을 따른다.
+/// 번역 단계 세 색과 송출등(듣는 중)만 직접 정하고 나머지는 시스템 색을 따른다.
+/// 단계 색은 색상 자체를 달리하고, 적록 색각 이상에서도 구분되는 호박색·파랑 짝을 쓴다.
 private enum Palette {
-    static let ink = dynamic(light: 0x17263A, dark: 0xE9EDF3)
-    static let pencil = dynamic(light: 0x667285, dark: 0x8F9BAD)
+    static let translating = dynamic(light: 0x6E747E, dark: 0x9AA0AA)
+    static let draft = dynamic(light: 0x9A5B00, dark: 0xE3A442)
+    static let refined = dynamic(light: 0x1F4FA8, dark: 0x7FA7FF)
     static let onAir = dynamic(light: 0xC62F28, dark: 0xFF5D52)
     static let rule = Color(nsColor: .separatorColor)
     static let paper = Color(nsColor: .textBackgroundColor)
