@@ -36,10 +36,13 @@ final class SessionModel {
     private var pendingStart: CMTime?
     private var pendingEnd: CMTime = .zero
     private var sourceLanguage: Locale.Language?
+    /// 장치를 바꿀 때 같은 언어로 다시 시작하기 위해 둔다.
+    private var locale: Locale?
     private var targetLanguage: Locale.Language?
 
     /// inputDevice가 nil이면 시스템 기본 입력 장치로 듣는다.
     func start(locale: Locale, target: Locale.Language, inputDevice: AudioDeviceID?) async {
+        self.locale = locale
         sourceLanguage = locale.language
         targetLanguage = target
         isBusy = true
@@ -73,6 +76,15 @@ final class SessionModel {
         } catch {
             status = error.localizedDescription
         }
+    }
+
+    /// 듣는 중에 입력 장치를 바꾼다. 중지한 뒤 같은 언어로 새 장치에서 다시 시작한다.
+    /// 진행 중 문단은 이 시점에 마쳐 번역하고, 이미 받아 적은 내용은 그대로 둔다.
+    /// 엔진만 새 장치로 바꿔 끼우면 장치 지정 뒤 비동기 구성 변경이 엔진을 멈춰 받아 적지 못했다(실측).
+    func switchInput(to inputDevice: AudioDeviceID?) async {
+        guard isRunning, let locale, let targetLanguage else { return }
+        await stop()
+        await start(locale: locale, target: targetLanguage, inputDevice: inputDevice)
     }
 
     func stop() async {

@@ -62,7 +62,7 @@ struct SettingsView: View {
                         .labelsHidden()
                 }
             }
-            Section {
+            Section("오디오") {
                 Picker("입력 장치", selection: $inputDeviceUID) {
                     Text("시스템 기본").tag("")
                     Divider()
@@ -70,11 +70,6 @@ struct SettingsView: View {
                         Text(device.name).tag(device.uid)
                     }
                 }
-            } header: {
-                Text("오디오")
-            } footer: {
-                Text("다음에 시작할 때부터 적용됩니다.")
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

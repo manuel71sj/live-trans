@@ -80,7 +80,7 @@ struct ContentView: View {
                             await model.stop()
                         } else if let sourceLocale, let targetLanguage {
                             // 저장된 장치가 지금 연결돼 있지 않으면 시스템 기본 입력 장치로 듣는다.
-                            let device = AudioInputDevices.all().first { $0.uid == inputDeviceUID }
+                            let device = selectedInput
                             runningInput = device ?? AudioInputDevices.systemDefault()
                             await model.start(locale: sourceLocale, target: targetLanguage, inputDevice: device?.id)
                         }
@@ -108,6 +108,13 @@ struct ContentView: View {
             // 그사이 언어쌍이 바뀌어 취소됐으면 이전 쌍의 결과를 반영하지 않는다.
             guard !Task.isCancelled else { return }
             pairStatus = status
+        }
+        // 듣는 중에 장치를 바꾸면 바로 새 장치로 다시 시작한다.
+        .onChange(of: inputDeviceUID) {
+            guard model.isRunning else { return }
+            let device = selectedInput
+            runningInput = device ?? AudioInputDevices.systemDefault()
+            Task { await model.switchInput(to: device?.id) }
         }
         // 설정을 바꾸거나 장치가 연결·분리되거나 시스템 기본 입력이 바뀌면 다시 고른다.
         .task(id: inputDeviceUID) {
@@ -255,7 +262,12 @@ struct ContentView: View {
 
     /// 고른 장치가 연결돼 있으면 그 장치, 아니면 시스템 기본 입력 장치
     private func resolveNextInput() {
-        nextInput = AudioInputDevices.all().first { $0.uid == inputDeviceUID } ?? AudioInputDevices.systemDefault()
+        nextInput = selectedInput ?? AudioInputDevices.systemDefault()
+    }
+
+    /// 설정에서 고른 장치. 시스템 기본을 골랐거나 그 장치가 지금 연결돼 있지 않으면 nil
+    private var selectedInput: AudioInputDevice? {
+        AudioInputDevices.all().first { $0.uid == inputDeviceUID }
     }
 
     /// 왼쪽은 입력 장치와 설치·지원·상태 안내, 오른쪽은 번역 단계 색 범례.
