@@ -16,7 +16,7 @@ while read -r _local_ref local_sha remote_ref _remote_sha; do
 done
 [ -n "$main_sha" ] || exit 0
 
-tag="v$(git rev-list --count "$main_sha")"
+build_number=$(git rev-list --count "$main_sha")
 previous=$(git describe --tags --abbrev=0 "$main_sha^" 2>/dev/null || true)
 notes=$(git log --no-merges --format='- %s (%h)' "${previous:+$previous..}$main_sha")
 
@@ -26,15 +26,18 @@ trap 'rm -rf "$work"' EXIT
 mkdir "$work/src"
 git archive "$main_sha" | tar -x -C "$work/src"
 
-echo "[release] $tag 빌드 중 (${main_sha:0:7})"
+echo "[release] 빌드 $build_number 빌드 중 (${main_sha:0:7})"
 (
     cd "$work/src"
     xcodegen generate --quiet
     xcodebuild -project LiveTrans.xcodeproj -scheme LiveTrans -configuration Release \
-        -derivedDataPath "$work/build" -quiet build
+        -derivedDataPath "$work/build" -quiet build CURRENT_PROJECT_VERSION="$build_number"
 )
+app="$work/build/Build/Products/Release/LiveTrans.app"
+# 태그는 앱에 실제로 들어간 버전(project.yml의 0.1.<빌드 번호>)을 따른다.
+tag="v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 zip="$work/LiveTrans-$tag.zip"
-ditto -c -k --keepParent "$work/build/Build/Products/Release/LiveTrans.app" "$zip"
+ditto -c -k --keepParent "$app" "$zip"
 
 # 앞선 push가 태그 push나 릴리스 등록 도중 실패했으면, 다시 push할 때 남은 태그·릴리스를 그대로 이어 쓴다.
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null || git tag "$tag" "$main_sha"

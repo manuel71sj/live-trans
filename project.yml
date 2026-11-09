@@ -6,6 +6,9 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    # 앱 버전은 0.1.<빌드 번호>. 빌드 번호는 릴리스 훅(scripts/hooks/pre-push)이 커밋 수로 넘긴다.
+    CURRENT_PROJECT_VERSION: "0"
+    MARKETING_VERSION: "0.1.$(CURRENT_PROJECT_VERSION)"
 targets:
   LiveTrans:
     type: application
@@ -14,6 +17,8 @@ targets:
     info:
       path: LiveTrans/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSMicrophoneUsageDescription: 말한 내용을 전사하고 번역하기 위해 마이크를 사용합니다.
     entitlements:
       path: LiveTrans/LiveTrans.entitlements
