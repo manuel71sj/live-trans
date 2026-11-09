@@ -1,0 +1,48 @@
+#!/bin/bash
+# main으로 push할 때 이 맥에서 앱을 빌드해 GitHub Release로 올린다.
+# 켜기(클론마다 한 번): git config core.hooksPath scripts/hooks
+#
+# git에는 push가 끝난 뒤 도는 훅이 없어서 push 직전에 빌드한다.
+# 빌드가 실패하면 push도 중단된다. 태그를 먼저 push해 커밋을 원격에 올린 뒤 릴리스를 만든다.
+set -euo pipefail
+
+remote="$1"
+
+main_sha=""
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+    if [ "$remote_ref" = "refs/heads/main" ]; then
+        main_sha="$local_sha"
+    fi
+done
+[ -n "$main_sha" ] || exit 0
+
+tag="v$(git rev-list --count "$main_sha")"
+previous=$(git describe --tags --abbrev=0 "$main_sha^" 2>/dev/null || true)
+notes=$(git log --no-merges --format='- %s (%h)' "${previous:+$previous..}$main_sha")
+
+# 작업 트리의 미커밋 변경이 섞이지 않도록 push하는 커밋 그대로 꺼내서 빌드한다.
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/src"
+git archive "$main_sha" | tar -x -C "$work/src"
+
+echo "[release] $tag 빌드 중 (${main_sha:0:7})"
+(
+    cd "$work/src"
+    xcodegen generate --quiet
+    xcodebuild -project LiveTrans.xcodeproj -scheme LiveTrans -configuration Release \
+        -derivedDataPath "$work/build" -quiet build
+)
+zip="$work/LiveTrans-$tag.zip"
+ditto -c -k --keepParent "$work/build/Build/Products/Release/LiveTrans.app" "$zip"
+
+# 앞선 push가 태그 push나 릴리스 등록 도중 실패했으면, 다시 push할 때 남은 태그·릴리스를 그대로 이어 쓴다.
+git rev-parse -q --verify "refs/tags/$tag" >/dev/null || git tag "$tag" "$main_sha"
+git push "$remote" "refs/tags/$tag"
+if gh release view "$tag" >/dev/null 2>&1; then
+    echo "[release] $tag 릴리스가 이미 있어 등록을 건너뜀"
+    exit 0
+fi
+gh release create "$tag" "$zip" --verify-tag --title "$tag" \
+    --notes "$(printf '## 변경 이력%s\n\n%s\n' "${previous:+ ($previous 이후)}" "$notes")"
+echo "[release] $tag 등록 완료"
