@@ -1,17 +1,28 @@
 import AVFoundation
 import Observation
+import Speech
 
 @Observable
 @MainActor
 final class SessionModel {
     struct Block {
         enum Stage {
-            case translating, draft, refined
+            /// original: 문단 언어가 번역 언어와 같아 번역 없이 원문을 그대로 보이는 블록
+            case translating, draft, refined, original
         }
 
         let source: String
         var translation: String?
         var stage: Stage = .translating
+    }
+
+    /// 확정된 전사 결과 하나. 두 언어의 결과를 시간·신뢰도로 견주기 위해 구간을 함께 둔다.
+    private struct Segment {
+        let text: String
+        let range: CMTimeRange
+        let confidence: Double
+        /// 함께 들을 언어(보조)의 결과인지
+        let isSecondary: Bool
     }
 
     /// 문단은 끊김에서 마치되, 끊김 없이 이 시간을 넘으면 확정 결과(문장) 끝에서 마친다.
@@ -22,27 +33,36 @@ final class SessionModel {
     private static let minFragmentSeconds = 5.0
 
     private(set) var blocks: [Block] = []
-    /// 아직 묶음으로 나가지 않은 확정 원문
-    private(set) var pending: [String] = []
-    private(set) var volatile = ""
+    /// 아직 묶음으로 나가지 않은 확정 원문. 한 언어의 결과만 담는다.
+    var pending: [String] { segments[flushedCount...].map(\.text) }
+    /// 한글이 든 보조 언어의 진행 중 텍스트가 있으면 그것을, 아니면 주 언어의 것을 보인다.
+    var volatile: String { Self.containsHangul(secondaryVolatile) ? secondaryVolatile : primaryVolatile }
     private(set) var status = ""
     private(set) var isRunning = false
     private(set) var isBusy = false
 
     private let transcriber = Transcriber()
-    private var resultsTask: Task<Void, Never>?
+    /// 이번 세션에 확정된 결과 전부. 앞에서 flushedCount개는 이미 블록으로 나갔고, 늦게 온 결과와 견주는 데 쓴다.
+    private var segments: [Segment] = []
+    private var flushedCount = 0
+    private var primaryVolatile = ""
+    private var secondaryVolatile = ""
+    private var resultsTasks: [Task<Void, Never>] = []
     private var translationTask: Task<Void, Never>?
     private var silenceTask: Task<Void, Never>?
-    private var pendingStart: CMTime?
-    private var pendingEnd: CMTime = .zero
+    private var pendingStart: CMTime? { segments[flushedCount...].first?.range.start }
+    private var pendingEnd: CMTime { segments.last?.range.end ?? .zero }
     private var sourceLanguage: Locale.Language?
     /// 장치를 바꿀 때 같은 언어로 다시 시작하기 위해 둔다.
     private var locale: Locale?
+    private var secondaryLocale: Locale?
     private var targetLanguage: Locale.Language?
 
     /// inputDevice가 nil이면 시스템 기본 입력 장치로 듣는다.
-    func start(locale: Locale, target: Locale.Language, inputDevice: AudioDeviceID?) async {
+    /// secondary가 있으면 그 언어로도 함께 받아 적는다.
+    func start(locale: Locale, secondary: Locale?, target: Locale.Language, inputDevice: AudioDeviceID?) async {
         self.locale = locale
+        secondaryLocale = secondary
         sourceLanguage = locale.language
         targetLanguage = target
         isBusy = true
@@ -54,23 +74,24 @@ final class SessionModel {
         }
         status = "음성 모델 준비 중…"
         do {
-            let results = try await transcriber.start(locale: locale, inputDevice: inputDevice)
+            let results = try await transcriber.start(locale: locale, secondary: secondary, inputDevice: inputDevice)
             status = ""
             isRunning = true
-            resultsTask = Task {
-                do {
-                    for try await result in results {
-                        let text = String(result.text.characters)
-                        if result.isFinal {
-                            volatile = ""
-                            appendFinal(text, range: result.range)
-                        } else {
-                            volatile = text
+            // 새 분석기의 오디오 시각은 0부터 다시 시작하므로 이전 세션의 구간을 남기지 않는다.
+            segments = []
+            flushedCount = 0
+            primaryVolatile = ""
+            secondaryVolatile = ""
+            resultsTasks = results.enumerated().map { index, sequence in
+                Task {
+                    do {
+                        for try await result in sequence {
+                            receive(result, isSecondary: index == 1)
+                            restartSilenceTimer()
                         }
-                        restartSilenceTimer()
+                    } catch {
+                        status = error.localizedDescription
                     }
-                } catch {
-                    status = error.localizedDescription
                 }
             }
         } catch {
@@ -84,7 +105,7 @@ final class SessionModel {
     func switchInput(to inputDevice: AudioDeviceID?) async {
         guard isRunning, let locale, let targetLanguage else { return }
         await stop()
-        await start(locale: locale, target: targetLanguage, inputDevice: inputDevice)
+        await start(locale: locale, secondary: secondaryLocale, target: targetLanguage, inputDevice: inputDevice)
     }
 
     func stop() async {
@@ -96,22 +117,83 @@ final class SessionModel {
         } catch {
             status = error.localizedDescription
         }
-        await resultsTask?.value
-        resultsTask = nil
+        for task in resultsTasks {
+            await task.value
+        }
+        resultsTasks = []
         silenceTask?.cancel()
         silenceTask = nil
         flushPending()
         isRunning = false
     }
 
+    private func receive(_ result: SpeechTranscriber.Result, isSecondary: Bool) {
+        if result.isFinal {
+            if isSecondary { secondaryVolatile = "" } else { primaryVolatile = "" }
+            acceptFinal(result, isSecondary: isSecondary)
+        } else {
+            let text = String(result.text.characters)
+            if isSecondary { secondaryVolatile = text } else { primaryVolatile = text }
+        }
+    }
+
+    /// 확정 결과를 도착 즉시 판정한다. 함께 들을 언어가 없으면 그대로 붙인다.
+    /// 한국어는 한글이 있을 때만 받고 받으면 버리지 않으며, 일본어는 시간의 절반 이상이 더 높은 신뢰도의 한국어와 겹칠 때만 지운다.
+    private func acceptFinal(_ result: SpeechTranscriber.Result, isSecondary: Bool) {
+        let text = String(result.text.characters)
+        guard secondaryLocale != nil else {
+            appendFinal(Segment(text: text, range: result.range, confidence: 0, isSecondary: false))
+            return
+        }
+        let segment = Segment(
+            text: text,
+            range: result.range,
+            confidence: Self.averageConfidence(of: result.text),
+            isSecondary: isSecondary
+        )
+        if isSecondary {
+            guard Self.containsHangul(text) else { return }
+            // 이미 블록으로 나간 일본어는 지울 수 없으므로 아직 나가지 않은 것만 본다.
+            let kept = segments[flushedCount...].filter {
+                $0.isSecondary || !Self.mostlyOverlaps($0.range, segment.range) || $0.confidence >= segment.confidence
+            }
+            segments.replaceSubrange(flushedCount..., with: kept)
+        } else if segments.contains(where: {
+            $0.isSecondary && Self.mostlyOverlaps(segment.range, $0.range) && $0.confidence > segment.confidence
+        }) {
+            return
+        }
+        appendFinal(segment)
+    }
+
     /// 묶음의 첫 결과 시작부터 이번 결과 끝까지가 60초 이상이면 묶음을 번역으로 내보낸다.
-    private func appendFinal(_ text: String, range: CMTimeRange) {
-        pending.append(text)
-        let start = pendingStart ?? range.start
-        pendingStart = start
-        pendingEnd = range.end
-        if (range.end - start).seconds >= Self.batchSeconds {
+    /// 언어가 바뀌면 한 문단에 한 언어만 담기 위해 길이와 관계없이 먼저 묶음을 마친다.
+    private func appendFinal(_ segment: Segment) {
+        if let last = segments[flushedCount...].last, last.isSecondary != segment.isSecondary {
             flushPending()
+        }
+        segments.append(segment)
+        if let start = pendingStart, (segment.range.end - start).seconds >= Self.batchSeconds {
+            flushPending()
+        }
+    }
+
+    /// 일본어 구간 japanese의 절반 이상이 korean과 겹치는지. 끝만 맞닿은 일본어 문장이 통째로 지워지지 않게 한다(실측).
+    private static func mostlyOverlaps(_ japanese: CMTimeRange, _ korean: CMTimeRange) -> Bool {
+        let overlap = (min(japanese.end, korean.end) - max(japanese.start, korean.start)).seconds
+        return overlap > 0 && overlap >= japanese.duration.seconds / 2
+    }
+
+    /// transcriptionConfidence가 붙은 run의 단순 평균. 없으면 0.
+    private static func averageConfidence(of text: AttributedString) -> Double {
+        let values = text.runs[\.transcriptionConfidence].compactMap(\.0)
+        return values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+    }
+
+    /// 한글 자모·호환 자모·음절 문자가 하나라도 있는지
+    static func containsHangul(_ text: String) -> Bool {
+        text.unicodeScalars.contains {
+            (0x1100...0x11FF).contains($0.value) || (0x3130...0x318F).contains($0.value) || (0xAC00...0xD7A3).contains($0.value)
         }
     }
 
@@ -130,10 +212,15 @@ final class SessionModel {
     /// 남은 확정 원문을 한 블록으로 내보내고, 앞 블록 번역이 끝난 뒤
     /// 1차 번역 → 후보정 순으로 처리한다. 후보정이 실패하면 1차 번역을 그대로 둔다.
     private func flushPending() {
-        guard !pending.isEmpty, let sourceLanguage, let targetLanguage else { return }
+        guard flushedCount < segments.count, let sourceLanguage, let targetLanguage else { return }
+        guard let language = segments[flushedCount].isSecondary ? secondaryLocale?.language : sourceLanguage else { return }
         let text = pending.joined(separator: " ")
-        pending = []
-        pendingStart = nil
+        flushedCount = segments.count
+        // 문단 언어가 번역 언어와 같으면 번역하지 않고 원문을 그대로 보인다.
+        if language.languageCode == targetLanguage.languageCode {
+            blocks.append(Block(source: text, translation: text, stage: .original))
+            return
+        }
         blocks.append(Block(source: text))
         let index = blocks.count - 1
 
@@ -142,7 +229,7 @@ final class SessionModel {
             await previous?.value
             let draft: String
             do {
-                draft = try await Translator.translate(text, from: sourceLanguage, to: targetLanguage)
+                draft = try await Translator.translate(text, from: language, to: targetLanguage)
             } catch {
                 blocks[index].translation = "번역 실패: \(error.localizedDescription)"
                 blocks[index].stage = .draft

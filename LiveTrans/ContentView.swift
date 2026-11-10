@@ -7,8 +7,12 @@ struct ContentView: View {
     @State private var targetLanguages: [Locale.Language] = []
     @State private var sourceLocale: Locale?
     @State private var targetLanguage: Locale.Language?
+    /// 원문 언어와 함께 받아 적을 언어. nil이면 원문 언어 하나만 듣는다.
+    @State private var secondaryLocale: Locale?
     @State private var model = SessionModel()
     @State private var pairStatus: LanguageAvailability.Status?
+    /// 설치가 필요한 언어쌍의 원문 언어
+    @State private var downloadSource: Locale.Language?
     @State private var downloadConfiguration: TranslationSession.Configuration?
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
     @AppStorage(SettingsKey.fontFamily) private var fontFamily = ""
@@ -58,6 +62,13 @@ struct ContentView: View {
                     }
                 }
                 .help("원문 언어")
+                Picker("함께 들을 언어", selection: $secondaryLocale) {
+                    Text("없음").tag(Locale?.none)
+                    if let korean = sourceLocales.first(where: { $0.language.languageCode == "ko" }) {
+                        Text(name(of: korean)).tag(Optional(korean))
+                    }
+                }
+                .help("함께 들을 언어")
                 Picker("번역 언어", selection: $targetLanguage) {
                     ForEach(targetLanguages, id: \.maximalIdentifier) { language in
                         Text(name(of: language)).tag(Optional(language))
@@ -82,7 +93,7 @@ struct ContentView: View {
                             // 저장된 장치가 지금 연결돼 있지 않으면 시스템 기본 입력 장치로 듣는다.
                             let device = selectedInput
                             runningInput = device ?? AudioInputDevices.systemDefault()
-                            await model.start(locale: sourceLocale, target: targetLanguage, inputDevice: device?.id)
+                            await model.start(locale: sourceLocale, secondary: secondaryLocale, target: targetLanguage, inputDevice: device?.id)
                         }
                     }
                 } label: {
@@ -101,13 +112,13 @@ struct ContentView: View {
             sourceLocale = sourceLocales.first { $0.language.languageCode == "ja" }
             targetLanguage = targetLanguages.first { $0.languageCode == "ko" }
         }
-        .task(id: [sourceLocale?.identifier, targetLanguage?.maximalIdentifier]) {
+        .task(id: [sourceLocale?.identifier, targetLanguage?.maximalIdentifier, secondaryLocale?.identifier]) {
             pairStatus = nil
-            guard let sourceLocale, let targetLanguage else { return }
-            let status = await Translator.status(from: sourceLocale.language, to: targetLanguage)
+            guard let required = await requiredPairStatus() else { return }
             // 그사이 언어쌍이 바뀌어 취소됐으면 이전 쌍의 결과를 반영하지 않는다.
             guard !Task.isCancelled else { return }
-            pairStatus = status
+            pairStatus = required.status
+            downloadSource = required.source
         }
         // 듣는 중에 장치를 바꾸면 바로 새 장치로 다시 시작한다.
         .onChange(of: inputDeviceUID) {
@@ -280,7 +291,7 @@ struct ContentView: View {
             if pairStatus == .supported {
                 Text("번역 언어팩 설치가 필요합니다.")
                 Button("설치") {
-                    downloadConfiguration = .init(source: sourceLocale?.language, target: targetLanguage)
+                    downloadConfiguration = .init(source: downloadSource, target: targetLanguage)
                 }
                 .controlSize(.small)
             } else if pairStatus == .unsupported {
@@ -307,8 +318,28 @@ struct ContentView: View {
 
     private func finishDownload() async {
         downloadConfiguration = nil
-        guard let sourceLocale, let targetLanguage else { return }
-        pairStatus = await Translator.status(from: sourceLocale.language, to: targetLanguage)
+        guard let required = await requiredPairStatus() else { return }
+        pairStatus = required.status
+        downloadSource = required.source
+    }
+
+    /// 번역에 필요한 언어쌍(원문 → 번역, 함께 들을 언어가 한국어면 한국어 → 번역도)을 모두 확인한다.
+    /// 하나라도 지원하지 않으면 unsupported, 아니면 설치가 필요한 쌍이 있으면 supported(그 쌍의 원문 언어를 함께 돌려준다).
+    private func requiredPairStatus() async -> (status: LanguageAvailability.Status, source: Locale.Language?)? {
+        guard let sourceLocale, let targetLanguage else { return nil }
+        var sources = [sourceLocale.language]
+        if let secondaryLocale, targetLanguage.languageCode != "ko" {
+            sources.append(secondaryLocale.language)
+        }
+        var result: (status: LanguageAvailability.Status, source: Locale.Language?) = (.installed, nil)
+        for source in sources {
+            switch await Translator.status(from: source, to: targetLanguage) {
+            case .unsupported: return (.unsupported, nil)
+            case .supported where result.status == .installed: result = (.supported, source)
+            default: break
+            }
+        }
+        return result
     }
 
     /// 블록 원문과 진행 중 확정 원문을 문단마다 빈 줄로 구분한다. 확정 전(전사 중) 텍스트는 뺀다.
@@ -326,6 +357,7 @@ struct ContentView: View {
         case .translating: Palette.translating
         case .draft: Palette.draft
         case .refined: Palette.refined
+        case .original: Palette.foreground
         }
     }
 

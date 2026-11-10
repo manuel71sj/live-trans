@@ -8,16 +8,22 @@ final class Transcriber {
     private var analyzer: SpeechAnalyzer?
     private var continuation: AsyncStream<AnalyzerInput>.Continuation?
 
-    /// 음성 모델을 준비하고 전사를 시작한다. 반환된 시퀀스는 중지 후 확정 결과까지 내보내고 끝난다.
+    /// 음성 모델을 준비하고 전사를 시작한다. 반환된 시퀀스는 [주 언어, 보조 언어?] 순서이고, 중지 후 확정 결과까지 내보내고 끝난다.
+    /// secondary가 있으면 같은 오디오를 그 언어로도 함께 전사한다.
     /// inputDevice가 nil이면 시스템 기본 입력 장치를 쓴다.
-    func start(locale: Locale, inputDevice: AudioDeviceID?) async throws -> some AsyncSequence<SpeechTranscriber.Result, any Error> {
-        let transcriber = SpeechTranscriber(
-            locale: locale,
-            transcriptionOptions: [],
-            reportingOptions: [.volatileResults],
-            attributeOptions: [.audioTimeRange]
-        )
-        if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+    func start(locale: Locale, secondary: Locale?, inputDevice: AudioDeviceID?) async throws -> [some AsyncSequence<SpeechTranscriber.Result, any Error>] {
+        // 신뢰도는 두 언어의 결과를 견줄 때만 쓴다. 보조 언어가 없으면 옵션도 예전 그대로 둔다.
+        let attributes: Set<SpeechTranscriber.ResultAttributeOption> = secondary == nil
+            ? [.audioTimeRange] : [.audioTimeRange, .transcriptionConfidence]
+        let modules = [locale, secondary].compactMap { $0 }.map {
+            SpeechTranscriber(
+                locale: $0,
+                transcriptionOptions: [],
+                reportingOptions: [.volatileResults],
+                attributeOptions: attributes
+            )
+        }
+        if let request = try await AssetInventory.assetInstallationRequest(supporting: modules) {
             try await request.downloadAndInstall()
         }
 
@@ -28,9 +34,9 @@ final class Transcriber {
             try Self.setDevice(inputDevice, of: engine.inputNode)
         }
 
-        let converter = try await AnalyzerInputConverter.converter(compatibleWith: [transcriber])
+        let converter = try await AnalyzerInputConverter.converter(compatibleWith: modules)
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        let analyzer = SpeechAnalyzer(modules: modules)
         try await analyzer.start(inputSequence: stream)
 
         Self.installTap(on: engine.inputNode, converter: converter, continuation: continuation)
@@ -47,7 +53,7 @@ final class Transcriber {
 
         self.analyzer = analyzer
         self.continuation = continuation
-        return transcriber.results
+        return modules.map(\.results)
     }
 
     func stop() async throws {
