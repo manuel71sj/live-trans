@@ -30,6 +30,8 @@ git archive "$main_sha" | tar -x -C "$work/src"
 echo "[release] 빌드 $build_number 빌드 중 (${main_sha:0:7})"
 (
     cd "$work/src"
+    # 워크트리에서 push하면 git이 훅에 GIT_DIR을 넘긴다. 그대로 두면 패키지를 받는 git이 이 저장소를 가리켜 실패한다(실측).
+    unset GIT_DIR
     xcodegen generate --quiet
     xcodebuild -project LiveTrans.xcodeproj -scheme LiveTrans -configuration Release \
         -derivedDataPath "$work/build" -quiet build CURRENT_PROJECT_VERSION="$build_number"
