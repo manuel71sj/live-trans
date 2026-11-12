@@ -91,6 +91,33 @@ nonisolated func writeAPIKey(_ key: String, for provider: RefineProvider) {
     }
 }
 
+/// 제공자의 모델 목록 API(GET <base>/models)에서 모델 id를 받아 온다.
+nonisolated func fetchModelIDs(provider: RefineProvider, baseURL: String, apiKey: String) async throws -> [String] {
+    let base: String
+    switch provider {
+    case .onDevice: return []
+    case .openAI: base = "https://api.openai.com/v1"
+    case .claude: base = "https://api.anthropic.com/v1"
+    case .local: base = baseURL
+    }
+    guard var url = URL(string: base)?.appending(path: "models") else { throw URLError(.badURL) }
+    // Claude는 한 번에 20개만 주므로 최대치로 받는다.
+    if provider == .claude { url.append(queryItems: [URLQueryItem(name: "limit", value: "1000")]) }
+    var request = URLRequest(url: url)
+    if provider == .claude {
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+    } else if !apiKey.isEmpty {
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    }
+    struct ModelList: Decodable {
+        struct Model: Decodable { let id: String }
+        let data: [Model]
+    }
+    let (data, _) = try await URLSession.shared.data(for: request)
+    return try JSONDecoder().decode(ModelList.self, from: data).data.map(\.id).sorted()
+}
+
 enum Theme: String, CaseIterable {
     case system, light, dark
 
@@ -126,6 +153,8 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.localModel) private var localModel = ""
     @AppStorage(SettingsKey.localEffort) private var localEffort = ""
     @State private var apiKey = ""
+    /// 고른 제공자의 API에서 받아 온 모델 id. 비어 있으면 모델을 직접 입력한다.
+    @State private var models: [String] = []
     @State private var fontFamilies: [String] = []
     @State private var inputDevices: [AudioInputDevice] = []
 
@@ -188,7 +217,19 @@ struct SettingsView: View {
                     if provider == .local {
                         TextField("Base URL", text: $localBaseURL, prompt: Text("http://192.168.0.10:8000/v1"))
                     }
-                    TextField("모델", text: model)
+                    if models.isEmpty {
+                        TextField("모델", text: model)
+                    } else {
+                        Picker("모델", selection: model) {
+                            // 저장된 값이 목록에 없으면 그 값도 보여 고른 것이 바뀌지 않게 한다.
+                            if !models.contains(model.wrappedValue) {
+                                Text(model.wrappedValue.isEmpty ? "선택 안 함" : model.wrappedValue).tag(model.wrappedValue)
+                            }
+                            ForEach(models, id: \.self) { id in
+                                Text(id).tag(id)
+                            }
+                        }
+                    }
                     Picker("Effort", selection: effort) {
                         Text("지정 안 함").tag("")
                         Text("low").tag("low")
@@ -210,6 +251,15 @@ struct SettingsView: View {
         // 제공자를 바꾸면 그 제공자의 키를 다시 읽는다.
         .task(id: provider) {
             if provider != .onDevice { apiKey = readAPIKey(for: provider) }
+        }
+        // 제공자·주소·키가 바뀌면 모델 목록을 다시 받는다. 받지 못하면 직접 입력 칸이 남는다.
+        // 잠깐 기다렸다 보내므로, 키를 입력하는 도중의 값이나 제공자를 바꾼 직후의 이전 제공자 키는 나가지 않는다.
+        .task(id: [provider.rawValue, localBaseURL, apiKey]) {
+            models = []
+            guard provider != .onDevice else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            models = (try? await fetchModelIDs(provider: provider, baseURL: localBaseURL, apiKey: apiKey)) ?? []
         }
         .onChange(of: apiKey) {
             if provider != .onDevice { writeAPIKey(apiKey, for: provider) }

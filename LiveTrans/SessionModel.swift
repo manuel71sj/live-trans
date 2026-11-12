@@ -229,7 +229,7 @@ final class SessionModel {
         // 외부 모델이 느려도 다음 문단의 1차 번역이 밀리지 않는다.
         let previousTranslation = translationTask
         let translation = Task<String?, Never> {
-            await previousTranslation?.value
+            _ = await previousTranslation?.value
             let draft: String
             do {
                 draft = try await Translator.translate(text, from: language, to: targetLanguage)
