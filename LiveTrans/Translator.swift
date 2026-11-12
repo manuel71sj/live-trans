@@ -20,23 +20,24 @@ enum Translator {
     /// 보정본이 번역 언어가 아닌 언어(대개 원문 언어)로 나왔을 때 던진다. 호출부는 1차 번역을 유지한다.
     struct WrongLanguageError: Error {}
 
-    /// 1차 번역을 온디바이스 언어 모델로 후보정한다. 직전 묶음은 맥락으로만 쓴다.
+    /// 1차 번역을 설정된 언어 모델(온디바이스 또는 외부 모델)로 후보정한다. 직전 묶음은 맥락으로만 쓴다.
     nonisolated static func refine(
         source: String,
         draft: String,
         previous: (source: String, translation: String)?,
-        target: Locale.Language
+        target: Locale.Language,
+        settings: RefineSettings
     ) async throws -> String {
         let english = Locale(identifier: "en")
         let targetName = english.localizedString(forIdentifier: target.minimalIdentifier) ?? target.minimalIdentifier
-        let session = LanguageModelSession(instructions: """
+        let instructions = """
             You are a professional interpreter post-editing machine translations of live meeting speech.
             The source text comes from automatic speech recognition and may contain recognition errors.
             The prompt has a <context> section and a <current> section.
             <context> is an earlier segment that is ALREADY translated. Use it only to understand the flow. Never output its translation.
             <current> is the only segment to work on. Rewrite its draft into accurate, natural \(targetName) that faithfully conveys its source.
             Output only the corrected translation of <current>, with no tags, notes or explanations.
-            """)
+            """
         var prompt = ""
         if let previous {
             prompt += """
@@ -53,8 +54,13 @@ enum Translator {
             draft: \(draft)
             </current>
             """
-        let refined = try await session.respond(to: prompt).content
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let response: String
+        if settings.provider == .onDevice {
+            response = try await LanguageModelSession(instructions: instructions).respond(to: prompt).content
+        } else {
+            response = try await RemoteRefiner.respond(instructions: instructions, prompt: prompt, settings: settings)
+        }
+        let refined = response.trimmingCharacters(in: .whitespacesAndNewlines)
         if let previous, similarity(refined, previous.translation) >= 0.6 {
             throw CopiedContextError()
         }

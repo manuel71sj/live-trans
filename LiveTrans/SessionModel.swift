@@ -48,7 +48,9 @@ final class SessionModel {
     private var primaryVolatile = ""
     private var secondaryVolatile = ""
     private var resultsTasks: [Task<Void, Never>] = []
-    private var translationTask: Task<Void, Never>?
+    /// 앞 문단의 1차 번역. 값은 1차 번역이고, 실패하면 nil.
+    private var translationTask: Task<String?, Never>?
+    private var refineTask: Task<Void, Never>?
     private var silenceTask: Task<Void, Never>?
     private var pendingStart: CMTime? { segments[flushedCount...].first?.range.start }
     private var pendingEnd: CMTime { segments.last?.range.end ?? .zero }
@@ -209,8 +211,7 @@ final class SessionModel {
         }
     }
 
-    /// 남은 확정 원문을 한 블록으로 내보내고, 앞 블록 번역이 끝난 뒤
-    /// 1차 번역 → 후보정 순으로 처리한다. 후보정이 실패하면 1차 번역을 그대로 둔다.
+    /// 남은 확정 원문을 한 블록으로 내보내고 1차 번역 → 후보정 순으로 처리한다. 후보정이 실패하면 1차 번역을 그대로 둔다.
     private func flushPending() {
         guard flushedCount < segments.count, let sourceLanguage, let targetLanguage else { return }
         guard let language = segments[flushedCount].isSecondary ? secondaryLocale?.language : sourceLanguage else { return }
@@ -224,26 +225,36 @@ final class SessionModel {
         blocks.append(Block(source: text))
         let index = blocks.count - 1
 
-        let previous = translationTask
-        translationTask = Task {
-            await previous?.value
+        // 1차 번역은 앞 문단의 1차 번역만 기다리고, 후보정은 앞 문단의 후보정을 기다린다.
+        // 외부 모델이 느려도 다음 문단의 1차 번역이 밀리지 않는다.
+        let previousTranslation = translationTask
+        let translation = Task<String?, Never> {
+            await previousTranslation?.value
             let draft: String
             do {
                 draft = try await Translator.translate(text, from: language, to: targetLanguage)
             } catch {
                 blocks[index].translation = "번역 실패: \(error.localizedDescription)"
                 blocks[index].stage = .draft
-                return
+                return nil
             }
             blocks[index].translation = draft
             blocks[index].stage = .draft
+            return draft
+        }
+        translationTask = translation
 
+        let previousRefine = refineTask
+        refineTask = Task {
+            await previousRefine?.value
+            guard let draft = await translation.value else { return }
             let context = index > 0 ? blocks[index - 1] : nil
             let refined = try? await Translator.refine(
                 source: text,
                 draft: draft,
                 previous: context.map { ($0.source, $0.translation ?? "") },
-                target: targetLanguage
+                target: targetLanguage,
+                settings: RefineSettings.current()
             )
             if let refined, !refined.isEmpty {
                 blocks[index].translation = refined
