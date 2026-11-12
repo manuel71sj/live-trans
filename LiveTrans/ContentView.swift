@@ -169,10 +169,17 @@ struct ContentView: View {
                 ForEach(model.blocks.indices, id: \.self) { index in
                     let block = model.blocks[index]
                     columns(
-                        source: Text(block.source)
-                            .font(sourceFont)
-                            .foregroundStyle(Palette.foreground)
-                            .lineSpacing(5),
+                        source: VStack(alignment: .leading, spacing: 8) {
+                            Text(block.source)
+                                .foregroundStyle(Palette.foreground)
+                            // 보정된 전사는 원문과 다를 때만 원문 아래에 보인다.
+                            if let corrected = block.corrected, corrected != block.source {
+                                Text(corrected)
+                                    .foregroundStyle(Palette.refined)
+                            }
+                        }
+                        .font(sourceFont)
+                        .lineSpacing(5),
                         target: Text(block.translation ?? "번역 중…")
                             .font(translationFont)
                             .lineSpacing(4)

@@ -12,6 +12,8 @@ final class SessionModel {
         }
 
         let source: String
+        /// AI가 음성 인식 오류를 고친 전사. 전사 보정이 꺼져 있거나 보정에 실패하면 nil이고, 있으면 번역은 이것을 원문으로 쓴다.
+        var corrected: String?
         var translation: String?
         var stage: Stage = .translating
     }
@@ -211,7 +213,7 @@ final class SessionModel {
         }
     }
 
-    /// 남은 확정 원문을 한 블록으로 내보내고 1차 번역 → 후보정 순으로 처리한다. 후보정이 실패하면 1차 번역을 그대로 둔다.
+    /// 남은 확정 원문을 한 블록으로 내보내고 (전사 보정 →) 1차 번역 → 후보정 순으로 처리한다. 후보정이 실패하면 1차 번역을 그대로 둔다.
     private func flushPending() {
         guard flushedCount < segments.count, let sourceLanguage, let targetLanguage else { return }
         guard let language = segments[flushedCount].isSecondary ? secondaryLocale?.language : sourceLanguage else { return }
@@ -230,9 +232,24 @@ final class SessionModel {
         let previousTranslation = translationTask
         let translation = Task<String?, Never> {
             _ = await previousTranslation?.value
+            // 전사 보정이 켜져 있으면 보정본으로 번역한다. 보정이 실패하면 원문 그대로 번역한다.
+            var source = text
+            if UserDefaults.standard.bool(forKey: SettingsKey.correctEnabled) {
+                let context = index > 0 ? blocks[index - 1] : nil
+                let corrected = try? await Translator.correct(
+                    source: text,
+                    previous: context.map { $0.corrected ?? $0.source },
+                    language: language,
+                    settings: RefineSettings.current(.correct)
+                )
+                if let corrected, !corrected.isEmpty {
+                    blocks[index].corrected = corrected
+                    source = corrected
+                }
+            }
             let draft: String
             do {
-                draft = try await Translator.translate(text, from: language, to: targetLanguage)
+                draft = try await Translator.translate(source, from: language, to: targetLanguage)
             } catch {
                 blocks[index].translation = "번역 실패: \(error.localizedDescription)"
                 blocks[index].stage = .draft
@@ -250,9 +267,9 @@ final class SessionModel {
             guard let draft = await translation.value else { return }
             let context = index > 0 ? blocks[index - 1] : nil
             let refined = try? await Translator.refine(
-                source: text,
+                source: blocks[index].corrected ?? text,
                 draft: draft,
-                previous: context.map { ($0.source, $0.translation ?? "") },
+                previous: context.map { ($0.corrected ?? $0.source, $0.translation ?? "") },
                 target: targetLanguage,
                 settings: RefineSettings.current()
             )

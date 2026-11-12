@@ -54,13 +54,7 @@ enum Translator {
             draft: \(draft)
             </current>
             """
-        let response: String
-        if settings.provider == .onDevice {
-            response = try await LanguageModelSession(instructions: instructions).respond(to: prompt).content
-        } else {
-            response = try await RemoteRefiner.respond(instructions: instructions, prompt: prompt, settings: settings)
-        }
-        let refined = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        let refined = try await generate(instructions: instructions, prompt: prompt, settings: settings)
         if let previous, similarity(refined, previous.translation) >= 0.6 {
             throw CopiedContextError()
         }
@@ -70,6 +64,58 @@ enum Translator {
             throw WrongLanguageError()
         }
         return refined
+    }
+
+    /// 전사 원문의 음성 인식 오류를 설정된 언어 모델로 고친다. 직전 묶음의 전사는 맥락으로만 쓴다.
+    /// 보정본이 원문 언어가 아니면 WrongLanguageError를 던진다. 호출부는 원문을 그대로 쓴다.
+    nonisolated static func correct(
+        source: String,
+        previous: String?,
+        language: Locale.Language,
+        settings: RefineSettings
+    ) async throws -> String {
+        let english = Locale(identifier: "en")
+        let languageName = english.localizedString(forIdentifier: language.minimalIdentifier) ?? language.minimalIdentifier
+        let instructions = """
+            You correct automatic speech recognition transcripts of live meeting speech in \(languageName).
+            The prompt has a <context> section and a <current> section.
+            <context> is the transcript just before. Use it only to understand the topic and terminology. Never output it.
+            <current> is the only text to work on. Fix words that were misrecognized, such as wrong homophones and misheard terms or names.
+            Keep the language, wording and order of everything else exactly as it is. Do not translate, summarize, add or remove content.
+            Output only the corrected text of <current>, with no tags, notes or explanations.
+            """
+        var prompt = ""
+        if let previous {
+            prompt += """
+                <context>
+                \(previous)
+                </context>
+
+                """
+        }
+        prompt += """
+            <current>
+            \(source)
+            </current>
+            """
+        let corrected = try await generate(instructions: instructions, prompt: prompt, settings: settings)
+        // 고치지 않고 번역해 내놓는 경우가 있다(온디바이스 실측).
+        if let detected = NLLanguageRecognizer.dominantLanguage(for: corrected),
+           detected.rawValue.split(separator: "-").first.map(String.init) != language.languageCode?.identifier {
+            throw WrongLanguageError()
+        }
+        return corrected
+    }
+
+    /// 설정된 제공자의 언어 모델에 한 번 물어 앞뒤 공백을 뗀 답을 돌려준다.
+    private nonisolated static func generate(instructions: String, prompt: String, settings: RefineSettings) async throws -> String {
+        let response: String
+        if settings.provider == .onDevice {
+            response = try await LanguageModelSession(instructions: instructions).respond(to: prompt).content
+        } else {
+            response = try await RemoteRefiner.respond(instructions: instructions, prompt: prompt, settings: settings)
+        }
+        return response.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 글자 2-gram Dice 계수 (0~1). 두 문장이 거의 같으면 1에 가깝다.
