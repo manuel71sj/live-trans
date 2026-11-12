@@ -27,5 +27,13 @@
 	<string>같은 네트워크의 LLM 서버로 후보정 요청을 보내기 위해 로컬 네트워크를 사용합니다.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>말한 내용을 전사하고 번역하기 위해 마이크를 사용합니다.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/manuel71sj/live-trans/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>sXgTdXCmRJj9JmGKI3DYlxMGxc/R6+tTjdYWd8BIScE=</string>
 </dict>
 </plist>

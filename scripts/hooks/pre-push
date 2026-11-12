@@ -4,6 +4,7 @@
 #
 # git에는 push가 끝난 뒤 도는 훅이 없어서 push 직전에 빌드한다.
 # 빌드가 실패하면 push도 중단된다. 태그를 먼저 push해 커밋을 원격에 올린 뒤 릴리스를 만든다.
+# 자동 업데이트용 서명 키가 이 맥의 로그인 키체인(계정 live-trans)에 있어야 한다. 없으면 push가 중단된다.
 set -euo pipefail
 
 remote="$1"
@@ -39,6 +40,37 @@ tag="v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Con
 zip="$work/LiveTrans-$tag.zip"
 ditto -c -k --keepParent "$app" "$zip"
 
+# 자동 업데이트: 앱에 박힌 공개 키와 짝인 개인 키로 zip에 서명하고, 업데이트 목록(appcast)을 만든다.
+sparkle_bin="$work/build/SourcePackages/artifacts/sparkle/Sparkle/bin"
+signing_key=$("$sparkle_bin/generate_keys" --account live-trans -p) || {
+    echo "[release] 서명 키 조회 실패: $signing_key" >&2
+    exit 1
+}
+app_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")
+if [ "$signing_key" != "$app_key" ]; then
+    echo "[release] 키체인의 서명 키(live-trans)가 앱의 SUPublicEDKey와 다릅니다. 이 키로 서명하면 설치된 앱이 업데이트를 받지 못합니다." >&2
+    exit 1
+fi
+signature=$("$sparkle_bin/sign_update" --account live-trans "$zip") || {
+    echo "[release] 업데이트 서명 실패: $signature" >&2
+    exit 1
+}
+appcast="$work/appcast.xml"
+cat > "$appcast" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>LiveTrans</title>
+        <item>
+            <title>$tag</title>
+            <sparkle:version>$build_number</sparkle:version>
+            <sparkle:shortVersionString>${tag#v}</sparkle:shortVersionString>
+            <enclosure url="https://github.com/manuel71sj/live-trans/releases/download/$tag/LiveTrans-$tag.zip" $signature type="application/octet-stream"/>
+        </item>
+    </channel>
+</rss>
+EOF
+
 # 앞선 push가 태그 push나 릴리스 등록 도중 실패했으면, 다시 push할 때 남은 태그·릴리스를 그대로 이어 쓴다.
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null || git tag "$tag" "$main_sha"
 git push "$remote" "refs/tags/$tag"
@@ -46,6 +78,6 @@ if gh release view "$tag" >/dev/null 2>&1; then
     echo "[release] $tag 릴리스가 이미 있어 등록을 건너뜀"
     exit 0
 fi
-gh release create "$tag" "$zip" --verify-tag --title "$tag" \
+gh release create "$tag" "$zip" "$appcast" --verify-tag --title "$tag" \
     --notes "$(printf '## 변경 이력%s\n\n%s\n' "${previous:+ ($previous 이후)}" "$notes")"
 echo "[release] $tag 등록 완료"
