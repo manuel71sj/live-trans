@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var downloadSource: Locale.Language?
     @State private var downloadConfiguration: TranslationSession.Configuration?
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
+    /// 폭이 stackedBelowWidth보다 좁으면 원문 위·번역 아래로 쌓는다.
+    @State private var isNarrow = false
     #if os(iOS)
     @State private var showsSettings = false
     #endif
@@ -37,16 +39,16 @@ struct ContentView: View {
     /// 원문·번역 두 열이 이 폭을 넘지 않게 해 한 줄이 너무 길어지지 않게 한다.
     private static let maxReadingWidth: CGFloat = 1080
 
+    /// 이보다 좁으면 두 열이 너무 좁아지므로 쌓는다. size class 대신 실제 폭으로 가른다
+    /// (iPhone 세로 402pt는 쌓고, 가로·iPad·macOS 최소 폭 760pt는 2열).
+    private nonisolated static let stackedBelowWidth: CGFloat = 600
+
     var body: some View {
         VStack(spacing: 0) {
-            columns(
-                source: Text(sourceLocale.map(name(of:)) ?? "원문"),
-                target: Text(targetLanguage.map(name(of:)) ?? "번역"),
-                verticalPadding: 8
-            )
-            .font(Typography.heading(size: 13))
-            .foregroundStyle(Palette.mutedForeground)
-            .background(Palette.background)
+            header
+                .font(Typography.heading(size: 13))
+                .foregroundStyle(Palette.mutedForeground)
+                .background(Palette.background)
             Palette.rule.frame(height: 1)
             if model.blocks.isEmpty && !showsLiveRow {
                 emptyState
@@ -58,6 +60,7 @@ struct ContentView: View {
         }
         .background(Palette.surface)
         .tint(Palette.primary)
+        .onGeometryChange(for: Bool.self) { $0.size.width < Self.stackedBelowWidth } action: { isNarrow = $0 }
         #if os(macOS)
         .frame(minWidth: 760, minHeight: 420)
         #endif
@@ -196,8 +199,42 @@ struct ContentView: View {
         .help("번역 언어")
     }
 
+    /// 좁은 폭에서는 열 머리를 쌓으면 두 줄이 되므로 한 줄로 쓴다.
+    @ViewBuilder
+    private var header: some View {
+        let source = Text(sourceLocale.map(name(of:)) ?? "원문")
+        let target = Text(targetLanguage.map(name(of:)) ?? "번역")
+        if isNarrow {
+            Text("\(source) → \(target)")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+        } else {
+            columns(source: source, target: target, verticalPadding: 8)
+        }
+    }
+
     /// 대역본처럼 원문은 왼쪽, 번역은 오른쪽 열에 같은 높이로 맞춘다. 두 열 폭은 같다.
+    /// 좁은 폭에서는 원문 위·번역 아래로 쌓고 문단 아래에 괘선을 긋는다.
+    @ViewBuilder
     private func columns(source: some View, target: some View, verticalPadding: CGFloat = 14) -> some View {
+        if isNarrow {
+            VStack(alignment: .leading, spacing: 6) {
+                source
+                target
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, verticalPadding)
+            .overlay(alignment: .bottom) {
+                Palette.rule.frame(height: 1)
+            }
+        } else {
+            wideColumns(source: source, target: target, verticalPadding: verticalPadding)
+        }
+    }
+
+    private func wideColumns(source: some View, target: some View, verticalPadding: CGFloat) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             source
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -298,13 +335,16 @@ struct ContentView: View {
         )
         .overlay(alignment: .top) {
             // 듣는 중이라는 건 글자가 알려 주므로 표시등은 깜빡이지 않고 켜져만 있다.
-            Circle()
-                .fill(Palette.onAir)
-                .frame(width: 9, height: 9)
-                .frame(width: 17, height: 17)
-                .background(Circle().fill(Palette.surface))
-                .opacity(model.isRunning ? 1 : 0)
-                .padding(.top, 15)
+            // 쌓은 레이아웃에는 가운데 괘선이 없어 표시등도 켜지 않는다.
+            if !isNarrow {
+                Circle()
+                    .fill(Palette.onAir)
+                    .frame(width: 9, height: 9)
+                    .frame(width: 17, height: 17)
+                    .background(Circle().fill(Palette.surface))
+                    .opacity(model.isRunning ? 1 : 0)
+                    .padding(.top, 15)
+            }
         }
     }
 
@@ -322,9 +362,11 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
-            Rectangle()
-                .fill(Palette.rule)
-                .frame(width: 1)
+            if !isNarrow {
+                Rectangle()
+                    .fill(Palette.rule)
+                    .frame(width: 1)
+            }
         }
     }
 
@@ -346,40 +388,60 @@ struct ContentView: View {
     #endif
 
     /// 왼쪽은 입력 장치와 설치·지원·상태 안내, 오른쪽은 번역 단계 색 범례.
+    /// 좁은 폭에서는 한 줄에 다 들어가지 않아 안내 줄 아래에 범례 줄을 둔다.
     private var footer: some View {
-        HStack(spacing: 12) {
-            #if os(macOS)
-            if let currentInput {
-                Label(currentInput.name, systemImage: "mic")
-                    .help("입력 장치")
-            }
-            #endif
-            if pairStatus == .supported {
-                Text("번역 언어팩 설치가 필요합니다.")
-                Button("설치") {
-                    downloadConfiguration = .init(source: downloadSource, target: targetLanguage)
+        Group {
+            if isNarrow {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 12) { footerNotices }
+                    legend
                 }
-                .controlSize(.small)
-            } else if pairStatus == .unsupported {
-                Text("지원하지 않는 언어쌍입니다.")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: 12) {
+                    footerNotices
+                    Spacer(minLength: 16)
+                    legend
+                }
             }
-            if !model.status.isEmpty {
-                Text(model.status)
-            }
-            Spacer(minLength: 16)
-            HStack(spacing: 14) {
-                Text("번역 중").foregroundStyle(Palette.translating)
-                Text("1차 번역").foregroundStyle(Palette.draft)
-                    .underline(pattern: .dot, color: Palette.draft)
-                Text("보정본").foregroundStyle(Palette.refined)
-            }
-            .fontWeight(.medium)
         }
         .font(Typography.caption)
         .foregroundStyle(Palette.mutedForeground)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Palette.background)
+    }
+
+    @ViewBuilder
+    private var footerNotices: some View {
+        #if os(macOS)
+        if let currentInput {
+            Label(currentInput.name, systemImage: "mic")
+                .help("입력 장치")
+        }
+        #endif
+        if pairStatus == .supported {
+            Text("번역 언어팩 설치가 필요합니다.")
+            Button("설치") {
+                downloadConfiguration = .init(source: downloadSource, target: targetLanguage)
+            }
+            .controlSize(.small)
+        } else if pairStatus == .unsupported {
+            Text("지원하지 않는 언어쌍입니다.")
+        }
+        if !model.status.isEmpty {
+            Text(model.status)
+        }
+    }
+
+    private var legend: some View {
+        HStack(spacing: 14) {
+            Text("번역 중").foregroundStyle(Palette.translating)
+            Text("1차 번역").foregroundStyle(Palette.draft)
+                .underline(pattern: .dot, color: Palette.draft)
+            Text("보정본").foregroundStyle(Palette.refined)
+        }
+        .fontWeight(.medium)
     }
 
     private func finishDownload() async {
