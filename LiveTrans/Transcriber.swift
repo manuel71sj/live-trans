@@ -34,14 +34,6 @@ final class Transcriber {
             try await request.downloadAndInstall()
         }
 
-        #if os(iOS)
-        // 세션을 켜기 전에 inputNode를 건드리면 입력 형식이 무효(0 Hz)가 되어 installTap에서 죽는다.
-        // 입력 장치는 고르지 않고 시스템 라우트를 그대로 쓴다.
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record)
-        try session.setActive(true)
-        #endif
-
         // 시작마다 엔진을 새로 만들어, 이전에 지정한 장치가 남지 않고 기본 장치로 돌아가게 한다.
         // 분석기를 띄우기 전에 지정해 실패해도 정리할 것이 없게 한다.
         engine = AVAudioEngine()
@@ -56,15 +48,26 @@ final class Transcriber {
         let analyzer = SpeechAnalyzer(modules: modules)
         try await analyzer.start(inputSequence: stream)
 
-        Self.installTap(on: engine.inputNode, converter: converter, continuation: continuation)
-        engine.prepare()
         do {
+            #if os(iOS)
+            // 세션을 켜기 전에 inputNode를 건드리면 입력 형식이 무효(0 Hz)가 되어 installTap에서 죽는다.
+            // 입력 장치는 고르지 않고 시스템 라우트를 그대로 쓴다.
+            // 분석기를 띄운 뒤에 켜서, 그 전에 실패하면 돌려줄 세션이 없게 한다.
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record)
+            try session.setActive(true)
+            #endif
+            Self.installTap(on: engine.inputNode, converter: converter, continuation: continuation)
+            engine.prepare()
             try engine.start()
         } catch {
             // 탭이 남으면 다음 시작에서 같은 버스에 중복 설치돼 앱이 종료된다.
             engine.inputNode.removeTap(onBus: 0)
             continuation.finish()
             await analyzer.cancelAndFinishNow()
+            #if os(iOS)
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            #endif
             throw error
         }
 
@@ -76,6 +79,10 @@ final class Transcriber {
     func stop() async throws {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        #if os(iOS)
+        // 세션을 돌려주지 않으면 시작할 때 멈춘 다른 앱의 소리가 중지한 뒤에도 돌아오지 않는다.
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
         continuation?.finish()
         continuation = nil
         try await analyzer?.finalizeAndFinishThroughEndOfInput()
