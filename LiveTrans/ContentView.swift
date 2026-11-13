@@ -15,13 +15,18 @@ struct ContentView: View {
     @State private var downloadSource: Locale.Language?
     @State private var downloadConfiguration: TranslationSession.Configuration?
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
+    #if os(iOS)
+    @State private var showsSettings = false
+    #endif
     @AppStorage(SettingsKey.fontFamily) private var fontFamily = ""
     @AppStorage(SettingsKey.fontSize) private var fontSize = 15.0
+    #if os(macOS)
     @AppStorage(SettingsKey.inputDeviceUID) private var inputDeviceUID = ""
     /// 듣는 중일 때 시작하면서 실제로 연 입력 장치
     @State private var runningInput: AudioInputDevice?
     /// 멈춰 있을 때 다음 시작에 쓸 입력 장치
     @State private var nextInput: AudioInputDevice?
+    #endif
 
     /// 스크롤 추적용: 내용 높이와, 그 시점에 맨 아래를 보고 있었는지
     private struct ScrollState: Equatable {
@@ -53,33 +58,31 @@ struct ContentView: View {
         }
         .background(Palette.surface)
         .tint(Palette.primary)
+        #if os(macOS)
         .frame(minWidth: 760, minHeight: 420)
+        #endif
         .toolbar {
+            #if os(macOS)
             ToolbarItemGroup(placement: .navigation) {
-                Picker("원문 언어", selection: $sourceLocale) {
-                    ForEach(sourceLocales, id: \.identifier) { locale in
-                        Text(name(of: locale)).tag(Optional(locale))
-                    }
-                }
-                .help("원문 언어")
-                Picker("함께 들을 언어", selection: $secondaryLocale) {
-                    Text("없음").tag(Locale?.none)
-                    if let korean = sourceLocales.first(where: { $0.language.languageCode == "ko" }) {
-                        Text(name(of: korean)).tag(Optional(korean))
-                    }
-                }
-                .help("함께 들을 언어")
-                Picker("번역 언어", selection: $targetLanguage) {
-                    ForEach(targetLanguages, id: \.maximalIdentifier) { language in
-                        Text(name(of: language)).tag(Optional(language))
-                    }
-                }
-                .help("번역 언어")
+                languagePickers
             }
+            #else
+            // iPhone 세로 폭에는 Picker 세 개가 들어가지 않아 메뉴 하나로 묶는다.
+            ToolbarItem(placement: .topBarLeading) {
+                Menu("언어", systemImage: "globe") {
+                    languagePickers
+                        .pickerStyle(.menu)
+                }
+            }
+            #endif
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
+                    #if os(macOS)
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(allSourceText, forType: .string)
+                    #else
+                    UIPasteboard.general.string = allSourceText
+                    #endif
                 } label: {
                     Label("원문 복사", systemImage: "doc.on.doc")
                         .labelStyle(.titleAndIcon)
@@ -90,10 +93,14 @@ struct ContentView: View {
                         if model.isRunning {
                             await model.stop()
                         } else if let sourceLocale, let targetLanguage {
+                            #if os(macOS)
                             // 저장된 장치가 지금 연결돼 있지 않으면 시스템 기본 입력 장치로 듣는다.
                             let device = selectedInput
                             runningInput = device ?? AudioInputDevices.systemDefault()
                             await model.start(locale: sourceLocale, secondary: secondaryLocale, target: targetLanguage, inputDevice: device?.id)
+                            #else
+                            await model.start(locale: sourceLocale, secondary: secondaryLocale, target: targetLanguage, inputDevice: nil)
+                            #endif
                         }
                     }
                 } label: {
@@ -101,9 +108,32 @@ struct ContentView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .disabled(model.isBusy || (!model.isRunning && pairStatus != .installed))
+                #if os(iOS)
+                Button {
+                    showsSettings = true
+                } label: {
+                    Label("설정", systemImage: "gearshape")
+                }
+                #endif
             }
         }
         .toolbar(removing: .title)
+        #if os(iOS)
+        .sheet(isPresented: $showsSettings) {
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("완료") { showsSettings = false }
+                        }
+                    }
+            }
+        }
+        // 듣는 중에는 화면이 자동으로 잠기지 않게 한다.
+        .onChange(of: model.isRunning) {
+            UIApplication.shared.isIdleTimerDisabled = model.isRunning
+        }
+        #endif
         .task {
             sourceLocales = await SpeechTranscriber.supportedLocales
                 .sorted { name(of: $0) < name(of: $1) }
@@ -120,6 +150,7 @@ struct ContentView: View {
             pairStatus = required.status
             downloadSource = required.source
         }
+        #if os(macOS)
         // 듣는 중에 장치를 바꾸면 바로 새 장치로 다시 시작한다.
         .onChange(of: inputDeviceUID) {
             guard model.isRunning else { return }
@@ -134,11 +165,35 @@ struct ContentView: View {
                 resolveNextInput()
             }
         }
+        #endif
         .translationTask(downloadConfiguration) { @concurrent session in
             // 시스템 다운로드 시트를 띄운다. 사용자가 취소해도 상태를 다시 확인한다.
             try? await session.prepareTranslation()
             await finishDownload()
         }
+    }
+
+    @ViewBuilder
+    private var languagePickers: some View {
+        Picker("원문 언어", selection: $sourceLocale) {
+            ForEach(sourceLocales, id: \.identifier) { locale in
+                Text(name(of: locale)).tag(Optional(locale))
+            }
+        }
+        .help("원문 언어")
+        Picker("함께 들을 언어", selection: $secondaryLocale) {
+            Text("없음").tag(Locale?.none)
+            if let korean = sourceLocales.first(where: { $0.language.languageCode == "ko" }) {
+                Text(name(of: korean)).tag(Optional(korean))
+            }
+        }
+        .help("함께 들을 언어")
+        Picker("번역 언어", selection: $targetLanguage) {
+            ForEach(targetLanguages, id: \.maximalIdentifier) { language in
+                Text(name(of: language)).tag(Optional(language))
+            }
+        }
+        .help("번역 언어")
     }
 
     /// 대역본처럼 원문은 왼쪽, 번역은 오른쪽 열에 같은 높이로 맞춘다. 두 열 폭은 같다.
@@ -273,6 +328,7 @@ struct ContentView: View {
         }
     }
 
+    #if os(macOS)
     /// 듣는 중에는 시작할 때 연 장치, 멈춰 있을 때는 다음 시작에 쓸 장치.
     private var currentInput: AudioInputDevice? {
         model.isRunning ? runningInput : nextInput
@@ -287,14 +343,17 @@ struct ContentView: View {
     private var selectedInput: AudioInputDevice? {
         AudioInputDevices.all().first { $0.uid == inputDeviceUID }
     }
+    #endif
 
     /// 왼쪽은 입력 장치와 설치·지원·상태 안내, 오른쪽은 번역 단계 색 범례.
     private var footer: some View {
         HStack(spacing: 12) {
+            #if os(macOS)
             if let currentInput {
                 Label(currentInput.name, systemImage: "mic")
                     .help("입력 장치")
             }
+            #endif
             if pairStatus == .supported {
                 Text("번역 언어팩 설치가 필요합니다.")
                 Button("설치") {
@@ -389,7 +448,13 @@ private enum Typography {
     /// 원문·번역 본문. 글꼴 가족이 비었거나 설치돼 있지 않으면 시스템 산세리프로 쓴다.
     @MainActor
     static func body(family: String, size: CGFloat) -> Font {
+        #if os(macOS)
         NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size).map { Font($0) } ?? .system(size: size)
+        #else
+        // UIKit은 없는 가족에 nil 대신 대체 글꼴을 돌려주므로 빈 문자열을 먼저 가른다.
+        if family.isEmpty { return .system(size: size) }
+        return Font(UIFont(descriptor: UIFontDescriptor(fontAttributes: [.family: family]), size: size))
+        #endif
     }
 
     /// "듣는 중"처럼 본문 옆에 붙는 짧은 표시
@@ -400,9 +465,15 @@ private enum Typography {
     /// 시스템 세리프에 일본어·한국어 명조를 대체 글꼴로 지정한다.
     /// 지정하지 않으면 한자는 명조, 가나 일부는 고딕으로 섞여 나온다.
     static func heading(size: CGFloat) -> Font {
+        #if os(macOS)
         let serif = NSFont.systemFont(ofSize: size, weight: .semibold).fontDescriptor.withDesign(.serif)!
         let cascade = ["HiraMinProN-W6", "AppleMyungjo"].map { NSFontDescriptor(name: $0, size: size) }
         return Font(NSFont(descriptor: serif.addingAttributes([.cascadeList: cascade]), size: size)!)
+        #else
+        let serif = UIFont.systemFont(ofSize: size, weight: .semibold).fontDescriptor.withDesign(.serif)!
+        let cascade = ["HiraMinProN-W6", "AppleMyungjo"].map { UIFontDescriptor(name: $0, size: size) }
+        return Font(UIFont(descriptor: serif.addingAttributes([.cascadeList: cascade]), size: size))
+        #endif
     }
 }
 
@@ -421,6 +492,7 @@ private enum Palette {
     static let onAir = dynamic(light: 0xC52C2A, dark: 0xF2716A)
 
     private static func dynamic(light: UInt32, dark: UInt32) -> Color {
+        #if os(macOS)
         Color(nsColor: NSColor(name: nil) { appearance in
             let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
             return NSColor(
@@ -430,5 +502,16 @@ private enum Palette {
                 alpha: 1
             )
         })
+        #else
+        Color(uiColor: UIColor { traits in
+            let hex = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(
+                red: CGFloat((hex >> 16) & 0xFF) / 255,
+                green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255,
+                alpha: 1
+            )
+        })
+        #endif
     }
 }

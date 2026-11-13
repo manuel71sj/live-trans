@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: kr.manuel71
   deploymentTarget:
     macOS: "27.0"
+    iOS: "27.0"
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -54,3 +55,41 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: kr.manuel71.LiveTrans
         CODE_SIGN_IDENTITY: "-"
+  # 같은 소스로 만드는 iOS 판. 자동 업데이트(Sparkle)와 샌드박스 entitlements는 macOS 전용이다.
+  LiveTrans-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: LiveTrans
+        excludes: [Info.plist]
+    dependencies:
+      - package: AnyLanguageModel
+    info:
+      path: LiveTrans-iOS/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSMicrophoneUsageDescription: 말한 내용을 전사하고 번역하기 위해 마이크를 사용합니다.
+        NSLocalNetworkUsageDescription: 같은 네트워크의 LLM 서버로 후보정 요청을 보내기 위해 로컬 네트워크를 사용합니다.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # 화면이 잠기거나 다른 앱으로 가도 마이크 입력을 이어 받는다.
+        UIBackgroundModes:
+          - audio
+    settings:
+      base:
+        PRODUCT_NAME: LiveTrans
+        PRODUCT_BUNDLE_IDENTIFIER: kr.manuel71.LiveTrans
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: NM989YJ9T8
+        CODE_SIGN_STYLE: Automatic

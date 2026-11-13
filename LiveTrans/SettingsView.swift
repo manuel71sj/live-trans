@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import Security
 import SwiftUI
 
@@ -153,6 +155,7 @@ enum Theme: String, CaseIterable {
         }
     }
 
+    #if os(macOS)
     /// nil이면 시스템 외관을 따른다.
     var appearance: NSAppearance? {
         switch self {
@@ -161,16 +164,29 @@ enum Theme: String, CaseIterable {
         case .dark: NSAppearance(named: .darkAqua)
         }
     }
+    #else
+    var appearance: UIUserInterfaceStyle {
+        switch self {
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+    #endif
 }
 
 struct SettingsView: View {
     @AppStorage(SettingsKey.theme) private var theme = Theme.system
     @AppStorage(SettingsKey.fontFamily) private var fontFamily = ""
     @AppStorage(SettingsKey.fontSize) private var fontSize = 15.0
+    #if os(macOS)
     @AppStorage(SettingsKey.inputDeviceUID) private var inputDeviceUID = ""
+    #endif
     @AppStorage(SettingsKey.correctEnabled) private var correctEnabled = false
     @State private var fontFamilies: [String] = []
+    #if os(macOS)
     @State private var inputDevices: [AudioInputDevice] = []
+    #endif
 
     var body: some View {
         Form {
@@ -193,6 +209,7 @@ struct SettingsView: View {
                         .labelsHidden()
                 }
             }
+            #if os(macOS)
             Section("오디오") {
                 Picker("입력 장치", selection: $inputDeviceUID) {
                     Text("시스템 기본").tag("")
@@ -202,6 +219,7 @@ struct SettingsView: View {
                     }
                 }
             }
+            #endif
             Section("전사 보정") {
                 Toggle("AI로 전사 보정", isOn: $correctEnabled)
                 if correctEnabled {
@@ -213,12 +231,18 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        #if os(macOS)
         .frame(width: 460)
         // 설정 창 높이를 내용에 맞춘다. 지정하지 않으면 Form이 늘어나 아래가 빈다.
         .fixedSize(horizontal: false, vertical: true)
+        #endif
         .task {
+            #if os(macOS)
             fontFamilies = NSFontManager.shared.availableFontFamilies.sorted()
             inputDevices = AudioInputDevices.all()
+            #else
+            fontFamilies = UIFont.familyNames.sorted()
+            #endif
         }
     }
 }
@@ -277,9 +301,18 @@ private struct LLMSettingsFields: View {
             if provider != .onDevice {
                 if provider == .local {
                     TextField("Base URL", text: $localBaseURL, prompt: Text("http://192.168.0.10:8000/v1"))
+                        #if os(iOS)
+                        // iOS 키보드가 첫 글자를 대문자로 바꾸고 자동 수정해 주소가 달라지지 않게 한다.
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        #endif
                 }
                 if models.isEmpty {
                     TextField("모델", text: model)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        #endif
                 } else {
                     Picker("모델", selection: model) {
                         // 저장된 값이 목록에 없으면 그 값도 보여 고른 것이 바뀌지 않게 한다.

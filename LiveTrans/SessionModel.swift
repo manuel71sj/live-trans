@@ -64,7 +64,7 @@ final class SessionModel {
 
     /// inputDevice가 nil이면 시스템 기본 입력 장치로 듣는다.
     /// secondary가 있으면 그 언어로도 함께 받아 적는다.
-    func start(locale: Locale, secondary: Locale?, target: Locale.Language, inputDevice: AudioDeviceID?) async {
+    func start(locale: Locale, secondary: Locale?, target: Locale.Language, inputDevice: InputDeviceID?) async {
         self.locale = locale
         secondaryLocale = secondary
         sourceLanguage = locale.language
@@ -73,7 +73,11 @@ final class SessionModel {
         defer { isBusy = false }
 
         guard await AVAudioApplication.requestRecordPermission() else {
+            #if os(macOS)
             status = "마이크 권한이 없습니다. 시스템 설정 > 개인정보 보호 및 보안 > 마이크에서 허용해 주세요."
+            #else
+            status = "마이크 권한이 없습니다. 설정 > 개인정보 보호 및 보안 > 마이크에서 허용해 주세요."
+            #endif
             return
         }
         status = "음성 모델 준비 중…"
@@ -103,6 +107,7 @@ final class SessionModel {
         }
     }
 
+    #if os(macOS)
     /// 듣는 중에 입력 장치를 바꾼다. 중지한 뒤 같은 언어로 새 장치에서 다시 시작한다.
     /// 진행 중 문단은 이 시점에 마쳐 번역하고, 이미 받아 적은 내용은 그대로 둔다.
     /// 엔진만 새 장치로 바꿔 끼우면 장치 지정 뒤 비동기 구성 변경이 엔진을 멈춰 받아 적지 못했다(실측).
@@ -111,6 +116,7 @@ final class SessionModel {
         await stop()
         await start(locale: locale, secondary: secondaryLocale, target: targetLanguage, inputDevice: inputDevice)
     }
+    #endif
 
     func stop() async {
         isBusy = true

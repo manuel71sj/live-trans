@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 
 /// Core Audio에 연결된 입력 장치. 설정에는 다시 연결해도 바뀌지 않는 UID를 저장한다.
@@ -98,3 +99,4 @@ enum AudioInputDevices {
         return value?.takeRetainedValue() as String?
     }
 }
+#endif
