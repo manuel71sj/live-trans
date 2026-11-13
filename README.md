@@ -172,6 +172,73 @@ open build/Build/Products/Debug/LiveTrans.app
 
 디버그 빌드에는 업데이트 확인이 없습니다.
 
+### iPhone·iPad에 설치해 보기
+
+같은 소스로 iOS 판(`LiveTrans-iOS` 스킴)을 빌드해 본인 기기에 직접 설치할 수 있습니다. 배포판(App Store·TestFlight)은 없습니다.
+
+준비물:
+
+- iOS 27 이상인 iPhone 또는 iPad, 그리고 Mac에 연결할 케이블
+- Xcode 27에 로그인한 Apple 계정(Xcode → Settings → Accounts). 무료 계정도 되지만 설치한 앱이 7일 뒤 만료되어 다시 설치해야 합니다
+- 기기의 개발자 모드: 설정 → 개인정보 보호 및 보안 → 개발자 모드를 켜고 재시동합니다
+
+1. `project.yml`의 `LiveTrans-iOS` 타깃에서 `DEVELOPMENT_TEAM`을 본인 팀 ID로 바꿉니다. 다른 팀이 이미 쓰는 번들 ID는 등록되지 않으므로 `PRODUCT_BUNDLE_IDENTIFIER`도 본인 것으로 바꿉니다(예: `com.example.LiveTrans`).
+   팀 ID는 키체인에 있는 개발 인증서에서 확인할 수 있습니다. 출력의 `OU=` 값입니다(인증서 이름 괄호 안의 값이 아닙니다).
+
+   ```sh
+   security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject
+   ```
+
+2. 기기를 연결해 잠금을 풀고 "이 컴퓨터를 신뢰"를 누른 뒤, 기기 식별자를 확인합니다. 상태가 `available`이어야 합니다.
+
+   ```sh
+   xcrun devicectl list devices
+   ```
+
+3. 빌드해서 설치합니다. `<기기 식별자>`에는 위에서 본 Identifier를 넣습니다.
+
+   ```sh
+   xcodegen generate
+   xcodebuild -project LiveTrans.xcodeproj -scheme LiveTrans-iOS -configuration Debug \
+     -destination 'id=<기기 식별자>' -derivedDataPath build/ios \
+     -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
+   xcrun devicectl device install app --device <기기 식별자> \
+     build/ios/Build/Products/Debug-iphoneos/LiveTrans.app
+   ```
+
+   Xcode에서 `LiveTrans.xcodeproj`를 열고 스킴 `LiveTrans-iOS`와 기기를 고른 뒤 실행(⌘R)해도 됩니다.
+
+4. 처음 실행할 때 "신뢰할 수 없는 개발자"가 뜨면 기기의 설정 → 일반 → VPN 및 기기 관리에서 개발자 앱을 신뢰합니다.
+
+#### 7일 만료 자동 갱신 (무료 Apple 계정)
+
+무료 계정 서명은 7일 뒤 만료됩니다. `scripts/ios-refresh.sh`는 마지막 설치본 만료가 2일 안쪽이면 이 앱의 캐시 프로파일을 지우고 다시 빌드해 덮어 설치합니다(설정과 API 키는 유지). 아래처럼 launchd에 등록하면 매일 10시 10분에 확인하고, Mac이 잠들어 있었으면 깨어날 때 실행됩니다.
+Mac에 Xcode 계정이 로그인돼 있고, iPhone이 USB나 같은 네트워크로 연결돼 있어야 설치됩니다. 저장소 루트에서 실행합니다.
+
+```sh
+UDID="<기기 식별자>"   # xcrun devicectl list devices
+mkdir -p ~/Library/Logs/LiveTrans
+sed -e "s|__REPO__|$PWD|" -e "s|__HOME__|$HOME|g" -e "s|__UDID__|$UDID|" \
+  scripts/kr.manuel71.livetrans.refresh.plist > ~/Library/LaunchAgents/kr.manuel71.livetrans.refresh.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/kr.manuel71.livetrans.refresh.plist
+launchctl kickstart gui/$(id -u)/kr.manuel71.livetrans.refresh   # 지금 한 번 실행
+tail -f ~/Library/Logs/LiveTrans/refresh.log
+```
+
+해제:
+
+```sh
+launchctl bootout gui/$(id -u)/kr.manuel71.livetrans.refresh
+rm ~/Library/LaunchAgents/kr.manuel71.livetrans.refresh.plist
+```
+
+iOS 판이 macOS 판과 다른 점:
+
+- 언어 세 가지(원문·함께 들을 언어·번역)는 왼쪽 위 지구본 **언어** 메뉴에서 고릅니다.
+- 설정은 오른쪽 위 톱니바퀴 버튼으로 엽니다.
+- 입력 장치는 고를 수 없고 iOS가 고른 입력(연결한 이어폰 마이크 등)을 그대로 씁니다.
+- 자동 업데이트가 없습니다. 새 버전은 다시 빌드해 설치합니다.
+
 ## 릴리스
 
 main에 push하면 이 맥에서 앱을 빌드해 GitHub Releases에 올립니다. 버전은 `0.1.<커밋 수>`이고 커밋 수가 빌드 번호입니다(태그 `v0.1.<커밋 수>`).
